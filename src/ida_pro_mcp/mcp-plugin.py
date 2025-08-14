@@ -189,6 +189,8 @@ class JSONRPCRequestHandler(http.server.BaseHTTPRequestHandler):
 class MCPHTTPServer(http.server.HTTPServer):
     allow_reuse_address = False
 
+
+# 最后对该Server启动和停止的封装
 class Server:
     HOST = "localhost"
     PORT = 13337
@@ -224,7 +226,7 @@ class Server:
         try:
             # Create server in the thread to handle binding
             self.server = MCPHTTPServer((Server.HOST, Server.PORT), JSONRPCRequestHandler)
-            print(f"[MCP] ----------Server started at http://{Server.HOST}:{Server.PORT}")
+            print(f"[MCP] Server started at http://{Server.HOST}:{Server.PORT}")
             self.server.serve_forever()
         except OSError as e:
             if e.errno == 98 or e.errno == 10048:  # Port already in use (Linux/Windows)
@@ -1852,41 +1854,24 @@ def get_ida_version() -> str:
     """Get the current IDA Pro version."""
     return idaapi.get_kernel_version()
 
-class MCP(idaapi.plugin_t):
-    flags = idaapi.PLUGIN_KEEP
-    comment = "MCP Plugin"
-    help = "MCP"
-    wanted_name = "MCP"
-    wanted_hotkey = "Ctrl-Alt-M"
 
-    def init(self):
-        self.server = Server()
-        hotkey = MCP.wanted_hotkey.replace("-", "+")
-        if sys.platform == "darwin":
-            hotkey = hotkey.replace("Alt", "Option")
-        print(f"[MCP] Plugin loaded, use Edit -> Plugins -> MCP ({hotkey}) to start the server")
 
-        # Register the "Stop MCP" action
-        action_desc = idaapi.action_desc_t(
-            "mcp:stop_server",  # The action name. This acts as a unique ID.
-            "Stop MCP Server",  # The action text.
-            StopServerHandler(self.server),  # The action handler.
-            "Ctrl-Alt-S",  # Optional: hotkey for the action
-            "Stop the MCP server"  # Optional: tooltip for the action
-        )
-        idaapi.register_action(action_desc)
-        idaapi.attach_action_to_menu("Edit/Plugins/Stop MCP", "mcp:stop_server", idaapi.SETMENU_APP)
-        print(f"[MCP] Plugin loaded, \nuse Edit -> Plugins -> MCP ({hotkey}) to start the server,\nuse Edit -> Plugins -> Stop MCP (\"Ctrl-Alt-S\") to stop the server")
 
-        return idaapi.PLUGIN_KEEP
 
-    def run(self, args):
+
+# ========== 动作 Handler ==========
+class StartServerHandler(idaapi.action_handler_t):
+    def __init__(self, server_instance):
+        idaapi.action_handler_t.__init__(self)
+        self.server = server_instance
+
+    def activate(self, ctx):
         self.server.start()
+        return 1
 
-    def term(self):
-        self.server.stop()
-        idaapi.detach_action_from_menu("Edit/Plugins/Stop MCP", "mcp:stop_server")
-        idaapi.unregister_action("mcp:stop_server")
+    def update(self, ctx):
+        return idaapi.AST_ENABLE_ALWAYS
+
 
 class StopServerHandler(idaapi.action_handler_t):
     def __init__(self, server_instance):
@@ -1900,5 +1885,30 @@ class StopServerHandler(idaapi.action_handler_t):
     def update(self, ctx):
         return idaapi.AST_ENABLE_ALWAYS
 
-def PLUGIN_ENTRY():
-    return MCP()
+
+def register_mcp_menu():
+    server = Server()
+    idaapi.create_menu("Edit/MCP", "MCP")
+
+    idaapi.register_action(idaapi.action_desc_t(
+        "mcp:start_server",
+        "Start MCP Server",
+        StartServerHandler(server),
+        "Ctrl-Alt-M",
+        "Start the MCP server"
+    ))
+    idaapi.attach_action_to_menu("Edit/MCP/Start_MCP", "mcp:start_server", idaapi.SETMENU_APP)
+
+
+    idaapi.register_action(idaapi.action_desc_t(
+        "mcp:stop_server",
+        "Stop MCP Server",
+        StopServerHandler(server),
+        "Ctrl-Alt-V",
+        "Stop the MCP server"
+    ))
+    idaapi.attach_action_to_menu("Edit/MCP/Stop_MCP", "mcp:stop_server", idaapi.SETMENU_APP)
+
+
+# 脚本加载时直接注册菜单
+register_mcp_menu()
