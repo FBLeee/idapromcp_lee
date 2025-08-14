@@ -224,7 +224,7 @@ class Server:
         try:
             # Create server in the thread to handle binding
             self.server = MCPHTTPServer((Server.HOST, Server.PORT), JSONRPCRequestHandler)
-            print(f"[MCP] fblee的服务器启动 at http://{Server.HOST}:{Server.PORT}")
+            print(f"[MCP] ----------Server started at http://{Server.HOST}:{Server.PORT}")
             self.server.serve_forever()
         except OSError as e:
             if e.errno == 98 or e.errno == 10048:  # Port already in use (Linux/Windows)
@@ -606,18 +606,6 @@ def get_current_address() -> str:
 def get_current_function() -> Optional[Function]:
     """Get the function currently selected by the user"""
     return get_function(idaapi.get_screen_ea())
-
-@jsonrpc
-@idaread
-def get_ida_version() -> str:
-    """Get the current IDA Pro version."""
-    # idaapi.get_kernel_version() 返回一个整数，例如 830
-    # 我们可以将其转换为字符串，或者根据需要格式化
-    version_int = idaapi.get_kernel_version()
-    # 假设版本号是 Major.Minor 格式，例如 8.3
-    major = version_int // 100
-    minor = version_int % 100
-    return f"{major}.{minor}"
 
 class ConvertedNumber(TypedDict):
     decimal: str
@@ -1857,6 +1845,12 @@ def dbg_enable_breakpoint(
     if idaapi.enable_bpt(ea, enable):
         return f"Breakpoint {'enabled' if enable else 'disabled'} at {hex(ea)}"
     return f"Failed to {'' if enable else 'disable '}breakpoint at address {hex(ea)}"
+
+@jsonrpc
+@idaread
+def get_ida_version() -> str:
+    """Get the current IDA Pro version."""
+    return idaapi.get_kernel_version()
 
 class MCP(idaapi.plugin_t):
     flags = idaapi.PLUGIN_KEEP
