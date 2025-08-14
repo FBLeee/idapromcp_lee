@@ -1851,12 +1851,122 @@ def dbg_enable_breakpoint(
 @jsonrpc
 @idaread
 def get_ida_version() -> str:
-    """Get the current IDA Pro version."""
+    """Get the current IDA version."""
     return idaapi.get_kernel_version()
 
 
+@jsonrpc
+@idaread
+def find_potential_key_functions() -> list[Function]:
+    """
+    查找可能包含硬编码密钥或执行类似密钥操作的函数。
+    """
+    potential_key_functions = []
+    for func_ea in idautils.Functions():
+        try:
+            pseudocode = decompile_function(hex(func_ea))
 
+            # 模式1：硬编码字符串后跟带算术运算的循环，并检查特定长度
+            # 这是基于sub_405C0的简化模式。
+            # 它查找qmemcpy/memcpy一个字符串，然后是一个循环。
+            # 从qmemcpy中捕获长度
+            pattern_1 = r"qmemcpy\(v\d+, \"(.+?)\", (\d+)\);\s*.*?do\s*.*?v\d+\[n0x\d+\] = \((\d+ \* \(v\d+\[n0x\d+\] - \d+\) % \d+ \+ \d+\) % \d+);"
 
+            # 模式2：调用常见加密/哈希函数或存在加密相关字符串
+            # 这是一个更通用的模式。
+            common_crypto_functions = [
+                "AES_encrypt", "AES_decrypt", "RC4", "MD5_Update", "SHA1_Update", "SHA256_Update",
+                "CryptEncrypt", "CryptDecrypt", "EVP_EncryptInit_ex", "EVP_DecryptInit_ex",
+                "RSA_public_encrypt", "RSA_private_decrypt", "DES_encrypt", "Blowfish_encrypt",
+                # OpenSSL密钥设置函数
+                "EVP_BytesToKey", "EVP_CipherInit_ex", "SSL_CTX_use_certificate_file",
+                "RSA_set_key", "DSA_set_key", "EC_KEY_set_private_key"
+            ]
+            common_crypto_strings = [
+                "AES", "RSA", "MD5", "SHA", "key", "password", "secret", "cipher", "decrypt", "encrypt",
+                # 更多OpenSSL特定字符串
+                "EVP_CIPHER_CTX", "EVP_MD_CTX", "SSL_CTX", "BIO", "X509", "PKCS", "PEM", "DER",
+                "aes-128-cbc", "aes-256-cbc", "rc4", "des-cbc", "sha256", "md5",
+                "private key", "public key", "certificate", "random", "seed"
+            ]
+
+            # 构建常见加密函数调用的正则表达式
+            crypto_func_pattern = r"\b(" + "|".join(re.escape(f) for f in common_crypto_functions) + r")\(.*?\);"
+            # 构建常见加密字符串的正则表达式
+            crypto_string_pattern = r"\b(" + "|".join(re.escape(s) for s in common_crypto_strings) + r")\b"
+
+            # 将这些组合成一个更通用的模式2
+            pattern_2_general = f"({crypto_func_pattern}|{crypto_string_pattern})"
+
+            # 模式3：访问常见的OpenSSL结构体成员（例如，ctx->key, rsa->n）
+            # 这是一个启发式方法，可能会产生误报。
+            openssl_struct_members = [
+                r"\bctx->key\b", r"\bctx->iv\b", r"\bctx->cipher\b",
+                r"\brsa->n\b", r"\brsa->e\b", r"\brsa->d\b",
+                r"\baes_key->rd_key\b", r"\baes_key->rounds\b"
+            ]
+            pattern_3_struct_access = r"(" + "|".join(openssl_struct_members) + r")"
+
+            pseudocode = decompile_function(hex(func_ea))
+            disassembly = disassemble_function(hex(func_ea))
+            assembly_code = "\n".join([line["instruction"] for line in disassembly["lines"]])
+
+            # 模式4：汇编级别特征（例如，常见加密指令）
+            # 这高度依赖于架构。这里主要关注x86/x64的共同点。
+            # 示例：多次XOR操作、移位/旋转操作、特定常量加载
+            assembly_patterns = [
+                r"xor\s+r[a-z0-9]+,\s+r[a-z0-9]+",  # 寄存器XOR操作（在加密中常见）
+                r"rol\s+", r"ror\s+", r"shl\s+", r"shr\s+",  # 旋转/移位指令
+                r"imul\s+",  # 整数乘法（在某些算法中使用）
+                r"mov\s+r[a-z0-9]+,\s+0x[0-9a-fA-F]{8,}",  # 加载大常量（潜在的魔术数字）
+                r"call\s+ds:\[.*\]",  # 调用导入函数的常见模式
+                r"call\s+qword\s+ptr\s+\[.*\]"  # 调用导入函数的另一种常见模式
+            ]
+            pattern_4_assembly = r"(" + "|".join(assembly_patterns) + r")"
+
+            is_potential_key_func = False
+
+            # 首先检查模式1，如果找到，则检查长度
+            match_1 = re.search(pattern_1, pseudocode, re.DOTALL)
+            if match_1:
+                try:
+                    key_length = int(match_1.group(2))  # group(2)捕获长度
+                    if key_length in [8, 16, 32]:
+                        is_potential_key_func = True
+                except ValueError:
+                    pass  # 如果无法解析长度，则继续检查其他模式
+
+            # 如果模式1不匹配或长度不合适，则检查其他模式
+            if not is_potential_key_func and re.search(pattern_2_general, pseudocode, re.IGNORECASE | re.DOTALL):
+                is_potential_key_func = True
+
+            # 检查模式3（OpenSSL结构体成员访问）
+            if not is_potential_key_func and re.search(pattern_3_struct_access, pseudocode, re.IGNORECASE | re.DOTALL):
+                is_potential_key_func = True
+
+            # 检查模式4（汇编特征）
+            if not is_potential_key_func and re.search(pattern_4_assembly, assembly_code, re.IGNORECASE | re.DOTALL):
+                is_potential_key_func = True
+
+            if is_potential_key_func:
+                func_info = get_function(func_ea)
+                potential_key_functions.append(func_info)
+                # 在IDA中为函数添加注释
+                set_comment(hex(func_ea), "MCP插件识别：潜在密钥/加密函数。")
+
+        except DecompilerLicenseError:
+            # 跳过因许可证问题无法反编译的函数
+            continue
+        except IDAError as e:
+            # 记录其他IDA错误但继续处理
+            print(f"Error processing function {hex(func_ea)}: {e}")
+            continue
+        except Exception as e:
+            # 捕获任何其他意外错误
+            print(f"Unexpected error processing function {hex(func_ea)}: {e}")
+            continue
+
+    return potential_key_functions
 
 
 # ========== 动作 Handler ==========
