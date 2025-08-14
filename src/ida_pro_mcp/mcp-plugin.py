@@ -224,7 +224,7 @@ class Server:
         try:
             # Create server in the thread to handle binding
             self.server = MCPHTTPServer((Server.HOST, Server.PORT), JSONRPCRequestHandler)
-            print(f"[MCP] Server started at http://{Server.HOST}:{Server.PORT}")
+            print(f"[MCP] fblee的服务器启动 at http://{Server.HOST}:{Server.PORT}")
             self.server.serve_forever()
         except OSError as e:
             if e.errno == 98 or e.errno == 10048:  # Port already in use (Linux/Windows)
