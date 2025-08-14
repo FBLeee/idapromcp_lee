@@ -1865,6 +1865,19 @@ class MCP(idaapi.plugin_t):
         if sys.platform == "darwin":
             hotkey = hotkey.replace("Alt", "Option")
         print(f"[MCP] Plugin loaded, use Edit -> Plugins -> MCP ({hotkey}) to start the server")
+
+        # Register the "Stop MCP" action
+        action_desc = idaapi.action_desc_t(
+            "mcp:stop_server",  # The action name. This acts as a unique ID.
+            "Stop MCP Server",  # The action text.
+            StopServerHandler(self.server),  # The action handler.
+            "Ctrl-Alt-S",  # Optional: hotkey for the action
+            "Stop the MCP server"  # Optional: tooltip for the action
+        )
+        idaapi.register_action(action_desc)
+        idaapi.attach_action_to_menu("Edit/Plugins/Stop MCP", "mcp:stop_server", idaapi.SETMENU_APP)
+        print(f"[MCP] Plugin loaded, \nuse Edit -> Plugins -> MCP ({hotkey}) to start the server,\nuse Edit -> Plugins -> Stop MCP (\"Ctrl-Alt-S\") to stop the server")
+
         return idaapi.PLUGIN_KEEP
 
     def run(self, args):
@@ -1872,6 +1885,20 @@ class MCP(idaapi.plugin_t):
 
     def term(self):
         self.server.stop()
+        idaapi.detach_action_from_menu("Edit/Plugins/Stop MCP", "mcp:stop_server")
+        idaapi.unregister_action("mcp:stop_server")
+
+class StopServerHandler(idaapi.action_handler_t):
+    def __init__(self, server_instance):
+        idaapi.action_handler_t.__init__(self)
+        self.server = server_instance
+
+    def activate(self, ctx):
+        self.server.stop()
+        return 1
+
+    def update(self, ctx):
+        return idaapi.AST_ENABLE_ALWAYS
 
 def PLUGIN_ENTRY():
     return MCP()
