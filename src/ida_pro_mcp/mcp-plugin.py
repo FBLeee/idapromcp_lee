@@ -5,6 +5,7 @@ if sys.version_info < (3, 11):
     raise RuntimeError("Python 3.11 or higher is required for the MCP plugin")
 
 import json
+import re
 import struct
 import threading
 import http.server
@@ -17,6 +18,7 @@ class JSONRPCError(Exception):
         self.code = code
         self.message = message
         self.data = data
+
 
 class RPCRegistry:
     def __init__(self):
@@ -53,7 +55,8 @@ class RPCRegistry:
                         value = expected_type(value)
                     converted_params.append(value)
                 except (ValueError, TypeError):
-                    raise JSONRPCError(-32602, f"Invalid type for parameter '{param_name}': expected {expected_type.__name__}")
+                    raise JSONRPCError(-32602,
+                                       f"Invalid type for parameter '{param_name}': expected {expected_type.__name__}")
 
             return func(*converted_params)
         elif isinstance(params, dict):
@@ -69,22 +72,27 @@ class RPCRegistry:
                         value = expected_type(value)
                     converted_params[param_name] = value
                 except (ValueError, TypeError):
-                    raise JSONRPCError(-32602, f"Invalid type for parameter '{param_name}': expected {expected_type.__name__}")
+                    raise JSONRPCError(-32602,
+                                       f"Invalid type for parameter '{param_name}': expected {expected_type.__name__}")
 
             return func(**converted_params)
         else:
             raise JSONRPCError(-32600, "Invalid Request: params must be array or object")
 
+
 rpc_registry = RPCRegistry()
+
 
 def jsonrpc(func: Callable) -> Callable:
     """Decorator to register a function as a JSON-RPC method"""
     global rpc_registry
     return rpc_registry.register(func)
 
+
 def unsafe(func: Callable) -> Callable:
     """Decorator to register mark a function as unsafe"""
     return rpc_registry.mark_unsafe(func)
+
 
 class JSONRPCRequestHandler(http.server.BaseHTTPRequestHandler):
     def send_jsonrpc_error(self, code: int, message: str, id: Any = None):
@@ -186,6 +194,7 @@ class JSONRPCRequestHandler(http.server.BaseHTTPRequestHandler):
         # Suppress logging
         pass
 
+
 class MCPHTTPServer(http.server.HTTPServer):
     allow_reuse_address = False
 
@@ -239,6 +248,7 @@ class Server:
         finally:
             self.running = False
 
+
 # A module that helps with writing thread safe ida code.
 # Based on:
 # https://web.archive.org/web/20160305190440/http://www.williballenthin.com/blog/2015/09/04/idapython-synchronization-decorator/
@@ -268,6 +278,7 @@ import ida_name
 import ida_ida
 import ida_frame
 
+
 class IDAError(Exception):
     def __init__(self, message: str):
         super().__init__(message)
@@ -276,11 +287,14 @@ class IDAError(Exception):
     def message(self) -> str:
         return self.args[0]
 
+
 class IDASyncError(Exception):
     pass
 
+
 class DecompilerLicenseError(IDAError):
     pass
+
 
 # Important note: Always make sure the return value from your function f is a
 # copy of the data you have gotten from IDA, and not the original data.
@@ -303,6 +317,7 @@ class DecompilerLicenseError(IDAError):
 
 logger = logging.getLogger(__name__)
 
+
 # Enum for safety modes. Higher means safer:
 class IDASafety:
     ida_kernwin.MFF_READ
@@ -310,17 +325,19 @@ class IDASafety:
     SAFE_READ = ida_kernwin.MFF_READ
     SAFE_WRITE = ida_kernwin.MFF_WRITE
 
+
 call_stack = queue.LifoQueue()
+
 
 def sync_wrapper(ff, safety_mode: IDASafety):
     """
     Call a function ff with a specific IDA safety_mode.
     """
-    #logger.debug('sync_wrapper: {}, {}'.format(ff.__name__, safety_mode))
+    # logger.debug('sync_wrapper: {}, {}'.format(ff.__name__, safety_mode))
 
     if safety_mode not in [IDASafety.SAFE_READ, IDASafety.SAFE_WRITE]:
-        error_str = 'Invalid safety mode {} over function {}'\
-                .format(safety_mode, ff.__name__)
+        error_str = 'Invalid safety mode {} over function {}' \
+            .format(safety_mode, ff.__name__)
         logger.error(error_str)
         raise IDASyncError(error_str)
 
@@ -328,14 +345,14 @@ def sync_wrapper(ff, safety_mode: IDASafety):
     res_container = queue.Queue()
 
     def runned():
-        #logger.debug('Inside runned')
+        # logger.debug('Inside runned')
 
         # Make sure that we are not already inside a sync_wrapper:
         if not call_stack.empty():
             last_func_name = call_stack.get()
             error_str = ('Call stack is not empty while calling the '
-                'function {} from {}').format(ff.__name__, last_func_name)
-            #logger.error(error_str)
+                         'function {} from {}').format(ff.__name__, last_func_name)
+            # logger.error(error_str)
             raise IDASyncError(error_str)
 
         call_stack.put((ff.__name__))
@@ -345,7 +362,7 @@ def sync_wrapper(ff, safety_mode: IDASafety):
             res_container.put(x)
         finally:
             call_stack.get()
-            #logger.debug('Finished runned')
+            # logger.debug('Finished runned')
 
     ret_val = idaapi.execute_sync(runned, safety_mode)
     res = res_container.get()
@@ -353,17 +370,21 @@ def sync_wrapper(ff, safety_mode: IDASafety):
         raise res
     return res
 
+
 def idawrite(f):
     """
     decorator for marking a function as modifying the IDB.
     schedules a request to be made in the main IDA loop to avoid IDB corruption.
     """
+
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
         ff = functools.partial(f, *args, **kwargs)
         ff.__name__ = f.__name__
         return sync_wrapper(ff, idaapi.MFF_WRITE)
+
     return wrapper
+
 
 def idaread(f):
     """
@@ -372,12 +393,15 @@ def idaread(f):
       inconsistent results.
     MFF_READ constant via: http://www.openrce.org/forums/posts/1827
     """
+
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
         ff = functools.partial(f, *args, **kwargs)
         ff.__name__ = f.__name__
         return sync_wrapper(ff, idaapi.MFF_READ)
+
     return wrapper
+
 
 def is_window_active():
     """Returns whether IDA is currently active"""
@@ -395,6 +419,7 @@ def is_window_active():
             return True
     return False
 
+
 class Metadata(TypedDict):
     path: str
     module: str
@@ -404,6 +429,7 @@ class Metadata(TypedDict):
     sha256: str
     crc32: str
     filesize: str
+
 
 def get_image_size() -> int:
     try:
@@ -423,10 +449,12 @@ def get_image_size() -> int:
         image_size = struct.unpack("<I", header[0x50:0x54])[0]
     return image_size
 
+
 @jsonrpc
 @idaread
 def get_metadata() -> Metadata:
     """Get metadata about the current IDB"""
+
     # Fat Mach-O binaries can return a None hash:
     # https://github.com/mrexodia/ida-pro-mcp/issues/26
     def hash(f):
@@ -443,6 +471,7 @@ def get_metadata() -> Metadata:
                     sha256=hash(ida_nalt.retrieve_input_file_sha256),
                     crc32=hex(ida_nalt.retrieve_input_file_crc32()),
                     filesize=hex(ida_nalt.retrieve_input_file_size()))
+
 
 def get_prototype(fn: ida_funcs.func_t) -> Optional[str]:
     try:
@@ -463,10 +492,12 @@ def get_prototype(fn: ida_funcs.func_t) -> Optional[str]:
         print(f"Error getting function prototype: {e}")
         return None
 
+
 class Function(TypedDict):
     address: str
     name: str
     size: str
+
 
 def parse_address(address: str) -> int:
     try:
@@ -476,6 +507,7 @@ def parse_address(address: str) -> int:
             if ch not in "0123456789abcdefABCDEF":
                 raise IDAError(f"Failed to parse address: {address}")
         raise IDAError(f"Failed to parse address (missing 0x prefix): {address}")
+
 
 def get_function(address: int, *, raise_error=True) -> Function:
     fn = idaapi.get_func(address)
@@ -491,7 +523,9 @@ def get_function(address: int, *, raise_error=True) -> Function:
 
     return Function(address=hex(address), name=name, size=hex(fn.end_ea - fn.start_ea))
 
+
 DEMANGLED_TO_EA = {}
+
 
 def create_demangled_to_ea_map():
     for ea in idautils.Functions():
@@ -519,15 +553,20 @@ def get_type_by_name(type_name: str) -> ida_typeinf.tinfo_t:
         return ida_typeinf.tinfo_t(ida_typeinf.BTF_UINT16)
 
     # 32-bit integers
-    elif type_name in ('int32', '__int32', 'int32_t', 'int', 'signed int', 'long', 'long int', 'signed long', 'signed long int'):
+    elif type_name in (
+    'int32', '__int32', 'int32_t', 'int', 'signed int', 'long', 'long int', 'signed long', 'signed long int'):
         return ida_typeinf.tinfo_t(ida_typeinf.BTF_INT32)
-    elif type_name in ('uint32', '__uint32', 'uint32_t', 'unsigned int', 'unsigned long', 'unsigned long int', 'dword', 'DWORD'):
+    elif type_name in (
+    'uint32', '__uint32', 'uint32_t', 'unsigned int', 'unsigned long', 'unsigned long int', 'dword', 'DWORD'):
         return ida_typeinf.tinfo_t(ida_typeinf.BTF_UINT32)
 
     # 64-bit integers
-    elif type_name in ('int64', '__int64', 'int64_t', 'long long', 'long long int', 'signed long long', 'signed long long int'):
+    elif type_name in (
+    'int64', '__int64', 'int64_t', 'long long', 'long long int', 'signed long long', 'signed long long int'):
         return ida_typeinf.tinfo_t(ida_typeinf.BTF_INT64)
-    elif type_name in ('uint64', '__uint64', 'uint64_t', 'unsigned int64', 'unsigned long long', 'unsigned long long int', 'qword', 'QWORD'):
+    elif type_name in (
+    'uint64', '__uint64', 'uint64_t', 'unsigned int64', 'unsigned long long', 'unsigned long long int', 'qword',
+    'QWORD'):
         return ida_typeinf.tinfo_t(ida_typeinf.BTF_UINT64)
 
     # 128-bit integers
@@ -537,9 +576,9 @@ def get_type_by_name(type_name: str) -> ida_typeinf.tinfo_t:
         return ida_typeinf.tinfo_t(ida_typeinf.BTF_UINT128)
 
     # Floating point types
-    elif type_name in ('float', ):
+    elif type_name in ('float',):
         return ida_typeinf.tinfo_t(ida_typeinf.BTF_FLOAT)
-    elif type_name in ('double', ):
+    elif type_name in ('double',):
         return ida_typeinf.tinfo_t(ida_typeinf.BTF_DOUBLE)
     elif type_name in ('long double', 'ldouble'):
         return ida_typeinf.tinfo_t(ida_typeinf.BTF_LDOUBLE)
@@ -549,7 +588,7 @@ def get_type_by_name(type_name: str) -> ida_typeinf.tinfo_t:
         return ida_typeinf.tinfo_t(ida_typeinf.BTF_BOOL)
 
     # Void type
-    elif type_name in ('void', ):
+    elif type_name in ('void',):
         return ida_typeinf.tinfo_t(ida_typeinf.BTF_VOID)
 
     # If not a standard type, try to get a named type
@@ -571,10 +610,11 @@ def get_type_by_name(type_name: str) -> ida_typeinf.tinfo_t:
 
     raise IDAError(f"Unable to retrieve {type_name} type info object")
 
+
 @jsonrpc
 @idaread
 def get_function_by_name(
-    name: Annotated[str, "Name of the function to get"]
+        name: Annotated[str, "Name of the function to get"]
 ) -> Function:
     """Get a function by its name"""
     function_address = idaapi.get_name_ea(idaapi.BADADDR, name)
@@ -589,13 +629,15 @@ def get_function_by_name(
             raise IDAError(f"No function found with name {name}")
     return get_function(function_address)
 
+
 @jsonrpc
 @idaread
 def get_function_by_address(
-    address: Annotated[str, "Address of the function to get"],
+        address: Annotated[str, "Address of the function to get"],
 ) -> Function:
     """Get a function by its address"""
     return get_function(parse_address(address))
+
 
 @jsonrpc
 @idaread
@@ -603,11 +645,13 @@ def get_current_address() -> str:
     """Get the address currently selected by the user"""
     return hex(idaapi.get_screen_ea())
 
+
 @jsonrpc
 @idaread
 def get_current_function() -> Optional[Function]:
     """Get the function currently selected by the user"""
     return get_function(idaapi.get_screen_ea())
+
 
 class ConvertedNumber(TypedDict):
     decimal: str
@@ -616,10 +660,11 @@ class ConvertedNumber(TypedDict):
     ascii: Optional[str]
     binary: str
 
+
 @jsonrpc
 def convert_number(
-    text: Annotated[str, "Textual representation of the number to convert"],
-    size: Annotated[Optional[int], "Size of the variable in bytes"],
+        text: Annotated[str, "Textual representation of the number to convert"],
+        size: Annotated[Optional[int], "Size of the variable in bytes"],
 ) -> ConvertedNumber:
     """Convert a number (decimal, hexadecimal) to different representations"""
     try:
@@ -660,11 +705,14 @@ def convert_number(
         binary=bin(value),
     )
 
+
 T = TypeVar("T")
+
 
 class Page(TypedDict, Generic[T]):
     data: list[T]
     next_offset: Optional[int]
+
 
 def paginate(data: list[T], offset: int, count: int) -> Page[T]:
     if count == 0:
@@ -677,6 +725,7 @@ def paginate(data: list[T], offset: int, count: int) -> Page[T]:
         "next_offset": next_offset,
     }
 
+
 def pattern_filter(data: list[T], pattern: str, key: str) -> list[T]:
     if not pattern:
         return data
@@ -685,28 +734,33 @@ def pattern_filter(data: list[T], pattern: str, key: str) -> list[T]:
 
     def matches(item: T) -> bool:
         return pattern.lower() in item[key].lower()
+
     return list(filter(matches, data))
+
 
 @jsonrpc
 @idaread
 def list_functions(
-    offset: Annotated[int, "Offset to start listing from (start at 0)"],
-    count: Annotated[int, "Number of functions to list (100 is a good default, 0 means remainder)"],
+        offset: Annotated[int, "Offset to start listing from (start at 0)"],
+        count: Annotated[int, "Number of functions to list (100 is a good default, 0 means remainder)"],
 ) -> Page[Function]:
     """List all functions in the database (paginated)"""
     functions = [get_function(address) for address in idautils.Functions()]
     return paginate(functions, offset, count)
 
+
 class Global(TypedDict):
     address: str
     name: str
 
+
 @jsonrpc
 @idaread
 def list_globals_filter(
-    offset: Annotated[int, "Offset to start listing from (start at 0)"],
-    count: Annotated[int, "Number of globals to list (100 is a good default, 0 means remainder)"],
-    filter: Annotated[str, "Filter to apply to the list (required parameter, empty string for no filter). Case-insensitive contains or /regex/ syntax"],
+        offset: Annotated[int, "Offset to start listing from (start at 0)"],
+        count: Annotated[int, "Number of globals to list (100 is a good default, 0 means remainder)"],
+        filter: Annotated[
+            str, "Filter to apply to the list (required parameter, empty string for no filter). Case-insensitive contains or /regex/ syntax"],
 ) -> Page[Global]:
     """List matching globals in the database (paginated, filtered)"""
     globals = []
@@ -718,18 +772,21 @@ def list_globals_filter(
     globals = pattern_filter(globals, filter, "name")
     return paginate(globals, offset, count)
 
+
 @jsonrpc
 def list_globals(
-    offset: Annotated[int, "Offset to start listing from (start at 0)"],
-    count: Annotated[int, "Number of globals to list (100 is a good default, 0 means remainder)"],
+        offset: Annotated[int, "Offset to start listing from (start at 0)"],
+        count: Annotated[int, "Number of globals to list (100 is a good default, 0 means remainder)"],
 ) -> Page[Global]:
     """List all globals in the database (paginated)"""
     return list_globals_filter(offset, count, "")
+
 
 class Import(TypedDict):
     address: str
     imported_name: str
     module: str
+
 
 @jsonrpc
 @idaread
@@ -759,17 +816,20 @@ def list_imports(
 
     return paginate(rv, offset, count)
 
+
 class String(TypedDict):
     address: str
     length: int
     string: str
 
+
 @jsonrpc
 @idaread
 def list_strings_filter(
-    offset: Annotated[int, "Offset to start listing from (start at 0)"],
-    count: Annotated[int, "Number of strings to list (100 is a good default, 0 means remainder)"],
-    filter: Annotated[str, "Filter to apply to the list (required parameter, empty string for no filter). Case-insensitive contains or /regex/ syntax"],
+        offset: Annotated[int, "Offset to start listing from (start at 0)"],
+        count: Annotated[int, "Number of strings to list (100 is a good default, 0 means remainder)"],
+        filter: Annotated[
+            str, "Filter to apply to the list (required parameter, empty string for no filter). Case-insensitive contains or /regex/ syntax"],
 ) -> Page[String]:
     """List matching strings in the database (paginated, filtered)"""
     strings = []
@@ -785,13 +845,15 @@ def list_strings_filter(
     strings = pattern_filter(strings, filter, "string")
     return paginate(strings, offset, count)
 
+
 @jsonrpc
 def list_strings(
-    offset: Annotated[int, "Offset to start listing from (start at 0)"],
-    count: Annotated[int, "Number of strings to list (100 is a good default, 0 means remainder)"],
+        offset: Annotated[int, "Offset to start listing from (start at 0)"],
+        count: Annotated[int, "Number of strings to list (100 is a good default, 0 means remainder)"],
 ) -> Page[String]:
     """List all strings in the database (paginated)"""
     return list_strings_filter(offset, count, "")
+
 
 @jsonrpc
 @idaread
@@ -810,14 +872,16 @@ def list_local_types():
                     type_name = f"<Anonymous Type #{ordinal}>"
                 locals.append(f"\nType #{ordinal}: {type_name}")
                 if tif.is_udt():
-                    c_decl_flags = (ida_typeinf.PRTYPE_MULTI | ida_typeinf.PRTYPE_TYPE | ida_typeinf.PRTYPE_SEMI | ida_typeinf.PRTYPE_DEF | ida_typeinf.PRTYPE_METHODS | ida_typeinf.PRTYPE_OFFSETS)
+                    c_decl_flags = (
+                                ida_typeinf.PRTYPE_MULTI | ida_typeinf.PRTYPE_TYPE | ida_typeinf.PRTYPE_SEMI | ida_typeinf.PRTYPE_DEF | ida_typeinf.PRTYPE_METHODS | ida_typeinf.PRTYPE_OFFSETS)
                     c_decl_output = tif._print(None, c_decl_flags)
                     if c_decl_output:
                         locals.append(f"  C declaration:\n{c_decl_output}")
                 else:
-                    simple_decl = tif._print(None, ida_typeinf.PRTYPE_1LINE | ida_typeinf.PRTYPE_TYPE | ida_typeinf.PRTYPE_SEMI)
+                    simple_decl = tif._print(None,
+                                             ida_typeinf.PRTYPE_1LINE | ida_typeinf.PRTYPE_TYPE | ida_typeinf.PRTYPE_SEMI)
                     if simple_decl:
-                        locals.append(f"  Simple declaration:\n{simple_decl}")  
+                        locals.append(f"  Simple declaration:\n{simple_decl}")
             else:
                 message = f"\nType #{ordinal}: Failed to retrieve information."
                 if error.str:
@@ -829,6 +893,7 @@ def list_local_types():
             continue
     return locals
 
+
 def decompile_checked(address: int) -> ida_hexrays.cfunc_t:
     if not ida_hexrays.init_hexrays_plugin():
         raise IDAError("Hex-Rays decompiler is not available")
@@ -836,7 +901,8 @@ def decompile_checked(address: int) -> ida_hexrays.cfunc_t:
     cfunc: ida_hexrays.cfunc_t = ida_hexrays.decompile_func(address, error, ida_hexrays.DECOMP_WARNINGS)
     if not cfunc:
         if error.code == ida_hexrays.MERR_LICENSE:
-            raise DecompilerLicenseError("Decompiler licence is not available. Use `disassemble_function` to get the assembly code instead.")
+            raise DecompilerLicenseError(
+                "Decompiler licence is not available. Use `disassemble_function` to get the assembly code instead.")
 
         message = f"Decompilation failed at {hex(address)}"
         if error.str:
@@ -846,10 +912,11 @@ def decompile_checked(address: int) -> ida_hexrays.cfunc_t:
         raise IDAError(message)
     return cfunc
 
+
 @jsonrpc
 @idaread
 def decompile_function(
-    address: Annotated[str, "Address of the function to decompile"],
+        address: Annotated[str, "Address of the function to decompile"],
 ) -> str:
     """Decompile a function at the given address"""
     address = parse_address(address)
@@ -879,6 +946,7 @@ def decompile_function(
 
     return pseudocode
 
+
 class DisassemblyLine(TypedDict):
     segment: NotRequired[str]
     address: str
@@ -886,9 +954,11 @@ class DisassemblyLine(TypedDict):
     instruction: str
     comments: NotRequired[list[str]]
 
+
 class Argument(TypedDict):
     name: str
     type: str
+
 
 class DisassemblyFunction(TypedDict):
     name: str
@@ -898,10 +968,11 @@ class DisassemblyFunction(TypedDict):
     stack_frame: list[dict]
     lines: list[DisassemblyLine]
 
+
 @jsonrpc
 @idaread
 def disassemble_function(
-    start_address: Annotated[str, "Address of the function to disassemble"],
+        start_address: Annotated[str, "Address of the function to disassemble"],
 ) -> DisassemblyFunction:
     """Get assembly code for a function"""
     start = parse_address(start_address)
@@ -996,7 +1067,8 @@ def disassemble_function(
         lines += [line]
 
     prototype = func.get_prototype()
-    arguments: list[Argument] = [Argument(name=arg.name, type=f"{arg.type}") for arg in prototype.iter_func()] if prototype else None
+    arguments: list[Argument] = [Argument(name=arg.name, type=f"{arg.type}") for arg in
+                                 prototype.iter_func()] if prototype else None
 
     disassembly_function = DisassemblyFunction(
         name=func.name,
@@ -1013,15 +1085,17 @@ def disassemble_function(
 
     return disassembly_function
 
+
 class Xref(TypedDict):
     address: str
     type: str
     function: Optional[Function]
 
+
 @jsonrpc
 @idaread
 def get_xrefs_to(
-    address: Annotated[str, "Address to get cross references to"],
+        address: Annotated[str, "Address to get cross references to"],
 ) -> list[Xref]:
     """Get all cross references to the given address"""
     xrefs = []
@@ -1034,11 +1108,12 @@ def get_xrefs_to(
         ]
     return xrefs
 
+
 @jsonrpc
 @idaread
 def get_xrefs_to_field(
-    struct_name: Annotated[str, "Name of the struct (type) containing the field"],
-    field_name: Annotated[str, "Name of the field (member) to get xrefs to"],
+        struct_name: Annotated[str, "Name of the struct (type) containing the field"],
+        field_name: Annotated[str, "Name of the field (member) to get xrefs to"],
 ) -> list[Xref]:
     """Get all cross references to a named struct field (member)"""
 
@@ -1068,13 +1143,13 @@ def get_xrefs_to_field(
     xrefs = []
     xref: ida_xref.xrefblk_t
     for xref in idautils.XrefsTo(tid):
-
         xrefs += [
             Xref(address=hex(xref.frm),
                  type="code" if xref.iscode else "data",
                  function=get_function(xref.frm, raise_error=False))
         ]
     return xrefs
+
 
 @jsonrpc
 @idaread
@@ -1089,11 +1164,12 @@ def get_entry_points() -> list[Function]:
             result.append(func)
     return result
 
+
 @jsonrpc
 @idawrite
 def set_comment(
-    address: Annotated[str, "Address in the function to set the comment for"],
-    comment: Annotated[str, "Comment text"],
+        address: Annotated[str, "Address in the function to set the comment for"],
+        comment: Annotated[str, "Comment text"],
 ):
     """Set a comment for a given address in the function disassembly and pseudocode"""
     address = parse_address(address)
@@ -1143,6 +1219,7 @@ def set_comment(
         cfunc.save_user_cmts()
     print(f"Failed to set decompiler comment at {hex(address)}")
 
+
 def refresh_decompiler_widget():
     widget = ida_kernwin.get_current_widget()
     if widget is not None:
@@ -1150,18 +1227,20 @@ def refresh_decompiler_widget():
         if vu is not None:
             vu.refresh_ctext()
 
+
 def refresh_decompiler_ctext(function_address: int):
     error = ida_hexrays.hexrays_failure_t()
     cfunc: ida_hexrays.cfunc_t = ida_hexrays.decompile_func(function_address, error, ida_hexrays.DECOMP_WARNINGS)
     if cfunc:
         cfunc.refresh_func_ctext()
 
+
 @jsonrpc
 @idawrite
 def rename_local_variable(
-    function_address: Annotated[str, "Address of the function containing the variable"],
-    old_name: Annotated[str, "Current name of the variable"],
-    new_name: Annotated[str, "New name for the variable (empty for a default name)"],
+        function_address: Annotated[str, "Address of the function containing the variable"],
+        old_name: Annotated[str, "Current name of the variable"],
+        new_name: Annotated[str, "New name for the variable (empty for a default name)"],
 ):
     """Rename a local variable in a function"""
     func = idaapi.get_func(parse_address(function_address))
@@ -1171,11 +1250,12 @@ def rename_local_variable(
         raise IDAError(f"Failed to rename local variable {old_name} in function {hex(func.start_ea)}")
     refresh_decompiler_ctext(func.start_ea)
 
+
 @jsonrpc
 @idawrite
 def rename_global_variable(
-    old_name: Annotated[str, "Current name of the global variable"],
-    new_name: Annotated[str, "New name for the global variable (empty for a default name)"],
+        old_name: Annotated[str, "Current name of the global variable"],
+        new_name: Annotated[str, "New name for the global variable (empty for a default name)"],
 ):
     """Rename a global variable"""
     ea = idaapi.get_name_ea(idaapi.BADADDR, old_name)
@@ -1183,11 +1263,12 @@ def rename_global_variable(
         raise IDAError(f"Failed to rename global variable {old_name} to {new_name}")
     refresh_decompiler_ctext(ea)
 
+
 @jsonrpc
 @idawrite
 def set_global_variable_type(
-    variable_name: Annotated[str, "Name of the global variable"],
-    new_type: Annotated[str, "New type for the variable"],
+        variable_name: Annotated[str, "Name of the global variable"],
+        new_type: Annotated[str, "New type for the variable"],
 ):
     """Set a global variable's type"""
     ea = idaapi.get_name_ea(idaapi.BADADDR, variable_name)
@@ -1196,6 +1277,7 @@ def set_global_variable_type(
         raise IDAError(f"Parsed declaration is not a variable type")
     if not ida_typeinf.apply_tinfo(ea, tif, ida_typeinf.PT_SIL):
         raise IDAError(f"Failed to apply type")
+
 
 @jsonrpc
 @idaread
@@ -1211,6 +1293,7 @@ def get_global_variable_value_by_name(variable_name: Annotated[str, "Name of the
 
     return get_global_variable_value_internal(ea)
 
+
 @jsonrpc
 @idaread
 def get_global_variable_value_at_address(ea: Annotated[str, "Address of the global variable"]) -> str:
@@ -1222,43 +1305,44 @@ def get_global_variable_value_at_address(ea: Annotated[str, "Address of the glob
     ea = parse_address(ea)
     return get_global_variable_value_internal(ea)
 
+
 def get_global_variable_value_internal(ea: int) -> str:
-     # Get the type information for the variable
-     tif = ida_typeinf.tinfo_t()
-     if not ida_nalt.get_tinfo(tif, ea):
-         # No type info, maybe we can figure out its size by its name
-         if not ida_bytes.has_any_name(ea):
-             raise IDAError(f"Failed to get type information for variable at {ea:#x}")
+    # Get the type information for the variable
+    tif = ida_typeinf.tinfo_t()
+    if not ida_nalt.get_tinfo(tif, ea):
+        # No type info, maybe we can figure out its size by its name
+        if not ida_bytes.has_any_name(ea):
+            raise IDAError(f"Failed to get type information for variable at {ea:#x}")
 
-         size = ida_bytes.get_item_size(ea)
-         if size == 0:
-             raise IDAError(f"Failed to get type information for variable at {ea:#x}")
-     else:
-         # Determine the size of the variable
-         size = tif.get_size()
+        size = ida_bytes.get_item_size(ea)
+        if size == 0:
+            raise IDAError(f"Failed to get type information for variable at {ea:#x}")
+    else:
+        # Determine the size of the variable
+        size = tif.get_size()
 
-     # Read the value based on the size
-     if size == 0 and tif.is_array() and tif.get_array_element().is_decl_char():
-         return_string = idaapi.get_strlit_contents(ea, -1, 0).decode("utf-8").strip()
-         return f"\"{return_string}\""
-     elif size == 1:
-         return hex(ida_bytes.get_byte(ea))
-     elif size == 2:
-         return hex(ida_bytes.get_word(ea))
-     elif size == 4:
-         return hex(ida_bytes.get_dword(ea))
-     elif size == 8:
-         return hex(ida_bytes.get_qword(ea))
-     else:
-         # For other sizes, return the raw bytes
-         return ' '.join(hex(x) for x in ida_bytes.get_bytes(ea, size))
+    # Read the value based on the size
+    if size == 0 and tif.is_array() and tif.get_array_element().is_decl_char():
+        return_string = idaapi.get_strlit_contents(ea, -1, 0).decode("utf-8").strip()
+        return f"\"{return_string}\""
+    elif size == 1:
+        return hex(ida_bytes.get_byte(ea))
+    elif size == 2:
+        return hex(ida_bytes.get_word(ea))
+    elif size == 4:
+        return hex(ida_bytes.get_dword(ea))
+    elif size == 8:
+        return hex(ida_bytes.get_qword(ea))
+    else:
+        # For other sizes, return the raw bytes
+        return ' '.join(hex(x) for x in ida_bytes.get_bytes(ea, size))
 
 
 @jsonrpc
 @idawrite
 def rename_function(
-    function_address: Annotated[str, "Address of the function to rename"],
-    new_name: Annotated[str, "New name for the function (empty for a default name)"],
+        function_address: Annotated[str, "Address of the function to rename"],
+        new_name: Annotated[str, "New name for the function (empty for a default name)"],
 ):
     """Rename a function"""
     func = idaapi.get_func(parse_address(function_address))
@@ -1268,11 +1352,12 @@ def rename_function(
         raise IDAError(f"Failed to rename function {hex(func.start_ea)} to {new_name}")
     refresh_decompiler_ctext(func.start_ea)
 
+
 @jsonrpc
 @idawrite
 def set_function_prototype(
-    function_address: Annotated[str, "Address of the function"],
-    prototype: Annotated[str, "New function prototype"],
+        function_address: Annotated[str, "Address of the function"],
+        prototype: Annotated[str, "New function prototype"],
 ):
     """Set a function's prototype"""
     func = idaapi.get_func(parse_address(function_address))
@@ -1288,6 +1373,7 @@ def set_function_prototype(
     except Exception as e:
         raise IDAError(f"Failed to parse prototype string: {prototype}")
 
+
 class my_modifier_t(ida_hexrays.user_lvar_modifier_t):
     def __init__(self, var_name: str, new_type: ida_typeinf.tinfo_t):
         ida_hexrays.user_lvar_modifier_t.__init__(self)
@@ -1301,6 +1387,7 @@ class my_modifier_t(ida_hexrays.user_lvar_modifier_t):
                 lvar_saved.type = self.new_type
                 return True
         return False
+
 
 # NOTE: This is extremely hacky, but necessary to get errors out of IDA
 def parse_decls_ctypes(decls: str, hti_flags: int) -> tuple[int, str]:
@@ -1340,10 +1427,12 @@ def parse_decls_ctypes(decls: str, hti_flags: int) -> tuple[int, str]:
         messages = []
     return errors, messages
 
+
 @jsonrpc
 @idawrite
 def declare_c_type(
-    c_declaration: Annotated[str, "C declaration of the type. Examples include: typedef int foo_t; struct bar { int a; bool b; };"],
+        c_declaration: Annotated[
+            str, "C declaration of the type. Examples include: typedef int foo_t; struct bar { int a; bool b; };"],
 ):
     """Create or update a local type from a C declaration"""
     # PT_SIL: Suppress warning dialogs (although it seems unnecessary here)
@@ -1357,12 +1446,13 @@ def declare_c_type(
         raise IDAError(f"Failed to parse type:\n{c_declaration}\n\nErrors:\n{pretty_messages}")
     return f"success\n\nInfo:\n{pretty_messages}"
 
+
 @jsonrpc
 @idawrite
 def set_local_variable_type(
-    function_address: Annotated[str, "Address of the decompiled function containing the variable"],
-    variable_name: Annotated[str, "Name of the variable"],
-    new_type: Annotated[str, "New type for the variable"],
+        function_address: Annotated[str, "Address of the decompiled function containing the variable"],
+        variable_name: Annotated[str, "Name of the variable"],
+        new_type: Annotated[str, "New type for the variable"],
 ):
     """Set a local variable's type"""
     try:
@@ -1385,11 +1475,13 @@ def set_local_variable_type(
         raise IDAError(f"Failed to modify local variable: {variable_name}")
     refresh_decompiler_ctext(func.start_ea)
 
+
 class StackFrameVariable(TypedDict):
     name: str
     offset: str
     size: str
     type: str
+
 
 @jsonrpc
 @idaread
@@ -1398,6 +1490,7 @@ def get_stack_frame_variables(
 ) -> list[StackFrameVariable]:
     """ Retrieve the stack frame variables for a given function """
     return get_stack_frame_variables_internal(parse_address(function_address))
+
 
 def get_stack_frame_variables_internal(function_address: int) -> list[dict]:
     func = idaapi.get_func(function_address)
@@ -1422,7 +1515,7 @@ def get_stack_frame_variables_internal(function_address: int) -> list[dict]:
                                            offset=hex(offset),
                                            size=hex(size),
                                            type=type)
-            ]
+                        ]
 
     return members
 
@@ -1433,10 +1526,12 @@ class StructureMember(TypedDict):
     size: str
     type: str
 
+
 class StructureDefinition(TypedDict):
     name: str
     size: str
     members: list[StructureMember]
+
 
 @jsonrpc
 @idaread
@@ -1465,6 +1560,7 @@ def get_defined_structures() -> list[StructureDefinition]:
                                        members=members)]
 
     return rv
+
 
 @jsonrpc
 @idawrite
@@ -1500,6 +1596,7 @@ def rename_stack_frame_variable(
     if not ida_frame.define_stkvar(func, new_name, sval, udm.type):
         raise IDAError("failed to rename stack frame variable")
 
+
 @jsonrpc
 @idawrite
 def create_stack_frame_variable(
@@ -1523,6 +1620,7 @@ def create_stack_frame_variable(
     tif = get_type_by_name(type_name)
     if not ida_frame.define_stkvar(func, variable_name, offset, tif):
         raise IDAError("failed to define stack frame variable")
+
 
 @jsonrpc
 @idawrite
@@ -1553,6 +1651,7 @@ def set_stack_frame_variable_type(
     tif = get_type_by_name(type_name)
     if not ida_frame.set_frame_member_type(func, offset, tif):
         raise IDAError("failed to set stack frame variable type")
+
 
 @jsonrpc
 @idawrite
@@ -1585,8 +1684,9 @@ def delete_stack_frame_variable(
     if ida_frame.is_funcarg_off(func, offset):
         raise IDAError(f"{variable_name} is an argument member. Will not delete.")
 
-    if not ida_frame.delete_frame_members(func, offset, offset+size):
+    if not ida_frame.delete_frame_members(func, offset, offset + size):
         raise IDAError("failed to delete stack frame variable")
+
 
 @jsonrpc
 @idaread
@@ -1602,10 +1702,11 @@ def read_memory_bytes(
     """
     return ' '.join(f'{x:#02x}' for x in ida_bytes.get_bytes(parse_address(memory_address), size))
 
+
 @jsonrpc
 @idaread
 def data_read_byte(
-    address: Annotated[str, "Address to get 1 byte value from"],
+        address: Annotated[str, "Address to get 1 byte value from"],
 ) -> int:
     """
     Read the 1 byte value at the specified address.
@@ -1615,10 +1716,11 @@ def data_read_byte(
     ea = parse_address(address)
     return ida_bytes.get_wide_byte(ea)
 
+
 @jsonrpc
 @idaread
 def data_read_word(
-    address: Annotated[str, "Address to get 2 bytes value from"],
+        address: Annotated[str, "Address to get 2 bytes value from"],
 ) -> int:
     """
     Read the 2 byte value at the specified address as a WORD.
@@ -1628,10 +1730,11 @@ def data_read_word(
     ea = parse_address(address)
     return ida_bytes.get_wide_word(ea)
 
+
 @jsonrpc
 @idaread
 def data_read_dword(
-    address: Annotated[str, "Address to get 4 bytes value from"],
+        address: Annotated[str, "Address to get 4 bytes value from"],
 ) -> int:
     """
     Read the 4 byte value at the specified address as a DWORD.
@@ -1640,6 +1743,7 @@ def data_read_dword(
     """
     ea = parse_address(address)
     return ida_bytes.get_wide_dword(ea)
+
 
 @jsonrpc
 @idaread
@@ -1654,6 +1758,7 @@ def data_read_qword(
     ea = parse_address(address)
     return ida_bytes.get_qword(ea)
 
+
 @jsonrpc
 @idaread
 def data_read_string(
@@ -1665,9 +1770,10 @@ def data_read_string(
     Only use this function if `get_global_variable_at` failed.
     """
     try:
-        return idaapi.get_strlit_contents(parse_address(address),-1,0).decode("utf-8")
+        return idaapi.get_strlit_contents(parse_address(address), -1, 0).decode("utf-8")
     except Exception as e:
         return "Error:" + str(e)
+
 
 @jsonrpc
 @idaread
@@ -1698,6 +1804,7 @@ def dbg_get_registers() -> list[dict[str, str]]:
         })
     return result
 
+
 @jsonrpc
 @idaread
 @unsafe
@@ -1722,14 +1829,14 @@ def dbg_get_call_stack() -> list[dict[str, str]]:
                     frame_info["module"] = "<unknown>"
 
                 name = (
-                    ida_name.get_nice_colored_name(
-                        frame.callea,
-                        ida_name.GNCN_NOCOLOR
-                        | ida_name.GNCN_NOLABEL
-                        | ida_name.GNCN_NOSEG
-                        | ida_name.GNCN_PREFDBG,
-                    )
-                    or "<unnamed>"
+                        ida_name.get_nice_colored_name(
+                            frame.callea,
+                            ida_name.GNCN_NOCOLOR
+                            | ida_name.GNCN_NOLABEL
+                            | ida_name.GNCN_NOSEG
+                            | ida_name.GNCN_PREFDBG,
+                        )
+                        or "<unnamed>"
                 )
                 frame_info["symbol"] = name
 
@@ -1742,6 +1849,7 @@ def dbg_get_call_stack() -> list[dict[str, str]]:
     except Exception as e:
         pass
     return callstack
+
 
 def list_breakpoints():
     ea = ida_ida.inf_get_min_ea()
@@ -1761,12 +1869,14 @@ def list_breakpoints():
         ea = ida_bytes.next_head(ea, end_ea)
     return breakpoints
 
+
 @jsonrpc
 @idaread
 @unsafe
 def dbg_list_breakpoints():
     """List all breakpoints in the program."""
     return list_breakpoints()
+
 
 @jsonrpc
 @idaread
@@ -1777,6 +1887,7 @@ def dbg_start_process() -> str:
         return "Debugger started"
     return "Failed to start debugger"
 
+
 @jsonrpc
 @idaread
 @unsafe
@@ -1785,6 +1896,7 @@ def dbg_exit_process() -> str:
     if idaapi.exit_process():
         return "Debugger exited"
     return "Failed to exit debugger"
+
 
 @jsonrpc
 @idaread
@@ -1795,11 +1907,12 @@ def dbg_continue_process() -> str:
         return "Debugger continued"
     return "Failed to continue debugger"
 
+
 @jsonrpc
 @idaread
 @unsafe
 def dbg_run_to(
-    address: Annotated[str, "Run the debugger to the specified address"],
+        address: Annotated[str, "Run the debugger to the specified address"],
 ) -> str:
     """Run the debugger to the specified address"""
     ea = parse_address(address)
@@ -1807,11 +1920,12 @@ def dbg_run_to(
         return f"Debugger run to {hex(ea)}"
     return f"Failed to run to address {hex(ea)}"
 
+
 @jsonrpc
 @idaread
 @unsafe
 def dbg_set_breakpoint(
-    address: Annotated[str, "Set a breakpoint at the specified address"],
+        address: Annotated[str, "Set a breakpoint at the specified address"],
 ) -> str:
     """Set a breakpoint at the specified address"""
     ea = parse_address(address)
@@ -1823,11 +1937,12 @@ def dbg_set_breakpoint(
             return f"Breakpoint already exists at {hex(ea)}"
     return f"Failed to set breakpoint at address {hex(ea)}"
 
+
 @jsonrpc
 @idaread
 @unsafe
 def dbg_delete_breakpoint(
-    address: Annotated[str, "del a breakpoint at the specified address"],
+        address: Annotated[str, "del a breakpoint at the specified address"],
 ) -> str:
     """del a breakpoint at the specified address"""
     ea = parse_address(address)
@@ -1835,12 +1950,13 @@ def dbg_delete_breakpoint(
         return f"Breakpoint deleted at {hex(ea)}"
     return f"Failed to delete breakpoint at address {hex(ea)}"
 
+
 @jsonrpc
 @idaread
 @unsafe
 def dbg_enable_breakpoint(
-    address: Annotated[str, "Enable or disable a breakpoint at the specified address"],
-    enable: Annotated[bool, "Enable or disable a breakpoint"],
+        address: Annotated[str, "Enable or disable a breakpoint at the specified address"],
+        enable: Annotated[bool, "Enable or disable a breakpoint"],
 ) -> str:
     """Enable or disable a breakpoint at the specified address"""
     ea = parse_address(address)
@@ -1848,128 +1964,473 @@ def dbg_enable_breakpoint(
         return f"Breakpoint {'enabled' if enable else 'disabled'} at {hex(ea)}"
     return f"Failed to {'' if enable else 'disable '}breakpoint at address {hex(ea)}"
 
+
 @jsonrpc
 @idaread
 def get_ida_version() -> str:
-    """Get the current IDA version."""
+    """Get the current IDA Pro version."""
     return idaapi.get_kernel_version()
 
 
-@jsonrpc
-@idaread
-def find_potential_key_functions() -> list[Function]:
-    """
-    查找可能包含硬编码密钥或执行类似密钥操作的函数。
-    """
-    potential_key_functions = []
-    for func_ea in idautils.Functions():
+# @jsonrpc
+# @idaread
+# def find_potential_key_functions() -> list[Function]:
+#     """
+#     查找可能包含硬编码密钥或执行类似密钥操作的函数。
+#     """
+#     potential_key_functions_set = set()
+
+#     common_crypto_functions = [
+#         "AES_encrypt", "AES_decrypt", "RC4", "MD5_Update", "SHA1_Update", "SHA256_Update",
+#         "CryptEncrypt", "CryptDecrypt", "EVP_EncryptInit_ex", "EVP_DecryptInit_ex",
+#         "RSA_public_encrypt", "RSA_private_decrypt", "DES_encrypt", "Blowfish_encrypt",
+#         "EVP_BytesToKey", "EVP_CipherInit_ex", "SSL_CTX_use_certificate_file",
+#         "RSA_set_key", "DSA_set_key", "EC_KEY_set_private_key"
+#     ]
+#     common_crypto_strings = [
+#         "AES", "RSA", "MD5", "SHA", "key", "password", "secret", "cipher", "decrypt", "encrypt",
+#         "EVP_CIPHER_CTX", "EVP_MD_CTX", "SSL_CTX", "BIO", "X509", "PKCS", "PEM", "DER",
+#         "aes-128-cbc", "aes-256-cbc", "rc4", "des-cbc", "sha256", "md5",
+#         "private key", "public key", "certificate", "random", "seed"
+#     ]
+
+#     # 模式1：硬编码字符串后跟带算术运算的循环，并检查特定长度
+#     pattern_1 = r"qmemcpy\(v\d+, \"(.+?)\", (\d+)\);\s*.*?do\s*.*?v\d+\[n0x\d+\] = \((\d+ \* \(v\d+\[n0x\d+\] - \d+\) % \d+ \+ \d+\) % \d+);"
+
+#     # 模式2：调用常见加密/哈希函数或存在加密相关字符串
+#     crypto_func_pattern = r"\b(" + "|".join(re.escape(f) for f in common_crypto_functions) + r")\(.*?\);"
+#     crypto_string_pattern = r"\b(" + "|".join(re.escape(s) for s in common_crypto_strings) + r")\b"
+#     pattern_2_general = f"({crypto_func_pattern}|{crypto_string_pattern})"
+
+#     # 模式3：访问常见的OpenSSL结构体成员（例如，ctx->key, rsa->n）
+#     openssl_struct_members = [
+#         r"\bctx->key\b", r"\bctx->iv\b", r"\bctx->cipher\b",
+#         r"\brsa->n\b", r"\brsa->e\b", r"\brsa->d\b",
+#         r"\baes_key->rd_key\b", r"\baes_key->rounds\b"
+#     ]
+#     pattern_3_struct_access = r"(" + "|".join(openssl_struct_members) + r")"
+
+#     # 模式4：汇编级别特征
+#     assembly_patterns = [
+#         r"xor\s+r[a-z0-9]+,\s+r[a-z0-9]+",
+#         r"rol\s+", r"ror\s+", r"shl\s+", r"shr\s+",
+#         r"imul\s+",
+#         r"mov\s+r[a-z0-9]+,\s+0x[0-9a-fA-F]{8,}",
+#         r"call\s+ds:\[.*\]",
+#         r"call\s+qword\s+ptr\s+\[.*\]"
+#     ]
+#     pattern_4_assembly = r"(" + "|".join(assembly_patterns) + r")"
+
+#     # 阶段1：初步筛选 - 基于函数名、导入、字符串引用和特定模式的交叉引用
+#     all_functions = {func_ea: get_function(func_ea) for func_ea in idautils.Functions()}
+
+#     # 1.1 基于函数名筛选
+#     for func_ea, func_info in all_functions.items():
+#         if any(keyword.lower() in func_info["name"].lower() for keyword in common_crypto_functions + common_crypto_strings):
+#             potential_key_functions_set.add(func_ea)
+
+#     # 1.2 基于导入函数筛选 (通用加密函数和内存复制函数)
+#     imports_page = list_imports(offset=0, count=0) # 获取所有导入
+#     mem_copy_functions = ["qmemcpy", "memcpy", "RtlCopyMemory", "CopyMemory"] # 常见的内存复制函数
+
+#     for imp in imports_page["data"]:
+#         if any(keyword.lower() in imp["imported_name"].lower() for keyword in common_crypto_functions + mem_copy_functions):
+#             xrefs = get_xrefs_to(imp["address"])
+#             for xref in xrefs:
+#                 if xref["function"]:
+#                     potential_key_functions_set.add(parse_address(xref["function"]["address"]))
+
+#     # 1.3 基于字符串筛选 (通用加密字符串)
+#     strings_page = list_strings(offset=0, count=0) # 获取所有字符串
+#     for s in strings_page["data"]:
+#         if any(keyword.lower() in s["string"].lower() for keyword in common_crypto_strings):
+#             xrefs = get_xrefs_to(s["address"])
+#             for xref in xrefs:
+#                 if xref["function"]:
+#                     potential_key_functions_set.add(parse_address(xref["function"]["address"]))
+
+#     # 阶段2：对初步筛选出的函数进行详细分析
+#     final_potential_key_functions = []
+#     for func_ea in potential_key_functions_set:
+#         try:
+#             is_potential_key_func = False
+#             pseudocode = None
+#             assembly_code = None
+
+#             # 尝试反编译函数
+#             try:
+#                 pseudocode = decompile_function(hex(func_ea))
+#             except DecompilerLicenseError:
+#                 pass
+#             except IDAError as e:
+#                 print(f"Warning: Failed to decompile function {hex(func_ea)}: {e}")
+#                 pass
+
+#             # 尝试反汇编函数
+#             try:
+#                 disassembly = disassemble_function(hex(func_ea))
+#                 assembly_code = "\n".join([line["instruction"] for line in disassembly["lines"]])
+#             except IDAError as e:
+#                 print(f"Warning: Failed to disassemble function {hex(func_ea)}: {e}")
+#                 pass
+
+#             if pseudocode:
+#                 # 检查模式1：硬编码字符串后跟带算术运算的循环
+#                 match_1 = re.search(pattern_1, pseudocode, re.DOTALL)
+#                 if match_1:
+#                     try:
+#                         key_length = int(match_1.group(2))
+#                         if key_length in [8, 16, 32]: # 常见的密钥长度
+#                             is_potential_key_func = True
+#                     except ValueError:
+#                         pass
+
+#                 # 检查模式2和模式3
+#                 if not is_potential_key_func:
+#                     if re.search(pattern_2_general, pseudocode, re.IGNORECASE | re.DOTALL):
+#                         is_potential_key_func = True
+#                     elif re.search(pattern_3_struct_access, pseudocode, re.IGNORECASE | re.DOTALL):
+#                         is_potential_key_func = True
+
+#             if assembly_code and not is_potential_key_func:
+#                 # 检查模式4
+#                 if re.search(pattern_4_assembly, assembly_code, re.IGNORECASE | re.DOTALL):
+#                     is_potential_key_func = True
+
+#             if is_potential_key_func:
+#                 func_info = get_function(func_ea)
+#                 final_potential_key_functions.append(func_info)
+#                 set_comment(hex(func_ea), "MCP插件识别：潜在密钥/加密函数。")
+
+#         except Exception as e:
+#             print(f"Unexpected error during detailed analysis of function {hex(func_ea)}: {e}")
+#             continue
+
+#     return final_potential_key_functions
+
+
+# ----------------------------------------------------------------------
+# 正则模式
+# ----------------------------------------------------------------------
+_STACK_VAR_RE = re.compile(r'\[(?:e|r)bp\s*\+\s*var_([0-9A-Fa-f]+)\]')
+_REG_PLUS_OFF_RE = re.compile(r'\[(?P<reg>[er](?:ax|bx|cx|dx|si|di|bp|sp)|r\d+)\s*\+\s*(?P<off>0x[0-9A-Fa-f]+|\d+)\]')
+
+
+# ----------------------------------------------------------------------
+# 工具函数
+# ----------------------------------------------------------------------
+def _imm_u8(ea, opn=1) -> bool:
+    if idc.get_operand_type(ea, opn) != idc.o_imm:
+        return False
+    val = idc.get_operand_value(ea, opn)
+    return 0 <= val <= 0xFF
+
+
+def _parse_stack_var_offset(op_text: str):
+    m = _STACK_VAR_RE.search(op_text)
+    if not m:
+        return None
+    try:
+        return int(m.group(1), 16)
+    except Exception:
+        return None
+
+
+def _parse_reg_plus_off(op_text: str):
+    m = _REG_PLUS_OFF_RE.search(op_text)
+    if not m:
+        return (None, None)
+    reg = m.group('reg').lower()
+    off = m.group('off')
+    try:
+        base = 16 if off.lower().startswith('0x') else 10
+        return (reg, int(off, base))
+    except Exception:
+        return (None, None)
+
+
+# ----------------------------------------------------------------------
+# 特征 1：连续 imm8 写入本地缓冲（快速扫描）
+# ----------------------------------------------------------------------
+def _track_runs_over_func(func_ea: int):
+    best_cnt, best_start_ea, best_tag = 0, None, None
+    cur_cnt, cur_start_ea, last_off, tag = 0, None, None, None
+    lea_bases = {}
+
+    for ea in idautils.FuncItems(func_ea):
+        mnem = idc.print_insn_mnem(ea).lower()
+
+        # 追踪 lea reg, [rbp+var_XX]
+        if mnem == 'lea':
+            dst = idc.print_operand(ea, 0).strip().lower()
+            src = idc.print_operand(ea, 1).strip().lower()
+            base_off = _parse_stack_var_offset(src)
+            if base_off is not None:
+                lea_bases[dst] = base_off
+            continue
+
+        if mnem != 'mov':
+            if cur_cnt > best_cnt:
+                best_cnt, best_start_ea, best_tag = cur_cnt, cur_start_ea, tag
+            cur_cnt, cur_start_ea, last_off, tag = 0, None, None, None
+            continue
+
+        if idc.get_operand_type(ea, 0) not in (idc.o_displ, idc.o_phrase, idc.o_mem):
+            if cur_cnt > best_cnt:
+                best_cnt, best_start_ea, best_tag = cur_cnt, cur_start_ea, tag
+            cur_cnt, cur_start_ea, last_off, tag = 0, None, None, None
+            continue
+
+        if not _imm_u8(ea, 1):
+            if cur_cnt > best_cnt:
+                best_cnt, best_start_ea, best_tag = cur_cnt, cur_start_ea, tag
+            cur_cnt, cur_start_ea, last_off, tag = 0, None, None, None
+            continue
+
+        mem_txt = idc.print_operand(ea, 0).lower()
+        off = _parse_stack_var_offset(mem_txt)
+        cur_tag = None
+        if off is not None:
+            cur_tag = 'stack'
+        else:
+            reg, add = _parse_reg_plus_off(mem_txt)
+            if reg and add is not None and reg in lea_bases:
+                off = lea_bases[reg] + add
+                cur_tag = f'{reg}-based'
+            else:
+                if cur_cnt > best_cnt:
+                    best_cnt, best_start_ea, best_tag = cur_cnt, cur_start_ea, tag
+                cur_cnt, cur_start_ea, last_off, tag = 0, None, None, None
+                continue
+
+        if last_off is None:
+            cur_cnt, cur_start_ea, last_off, tag = 1, ea, off, cur_tag
+        else:
+            if abs(off - last_off) == 1 and cur_tag == tag:
+                cur_cnt += 1
+                last_off = off
+            else:
+                if cur_cnt > best_cnt:
+                    best_cnt, best_start_ea, best_tag = cur_cnt, cur_start_ea, tag
+                cur_cnt, cur_start_ea, last_off, tag = 1, ea, off, cur_tag
+
+    if cur_cnt > best_cnt:
+        best_cnt, best_start_ea, best_tag = cur_cnt, cur_start_ea, tag
+
+    return best_cnt, best_start_ea, best_tag
+
+
+def find_const_byte_runs_fast(min_run: int = 5):
+    results = []
+    for f_ea in idautils.Functions():
+        run_len, start_ea, mode = _track_runs_over_func(f_ea)
+        if run_len >= min_run:
+            name = idaapi.get_func_name(f_ea) or f"sub_{f_ea:08X}"
+            results.append({
+                "ea": f_ea,
+                "name": name,
+                "type": "const_bytes",
+                "detail": f"{run_len} bytes ({mode})"
+            })
+    return results
+
+
+# ----------------------------------------------------------------------
+# 特征 2：检测 call 与 非 call 的特定 API 调用
+# ----------------------------------------------------------------------
+API_KEYWORDS = [
+    "qmemcpy", "memcpy", "memmove", "memset", "strcpy", "strncpy",
+    "AES_encrypt", "AES_decrypt", "RC4", "MD5_Update", "SHA1_Update", "SHA256_Update",
+    "CryptEncrypt", "CryptDecrypt", "EVP_EncryptInit_ex", "EVP_DecryptInit_ex",
+    "RSA_public_encrypt", "RSA_private_decrypt", "DES_encrypt", "Blowfish_encrypt",
+    "EVP_BytesToKey", "EVP_CipherInit_ex", "SSL_CTX_use_certificate_file",
+    "RSA_set_key", "DSA_set_key", "EC_KEY_set_private_key"
+]
+
+
+def find_api_refs():
+    results = []
+    for f_ea in idautils.Functions():
+        name = idaapi.get_func_name(f_ea) or f"sub_{f_ea:08X}"
+        for ea in idautils.FuncItems(f_ea):
+            op1 = idc.print_operand(ea, 0).lower()
+            op2 = idc.print_operand(ea, 1).lower()
+            mnem = idc.print_insn_mnem(ea).lower()
+            text = op1 + " " + op2
+            if any(api in text for api in API_KEYWORDS):
+                results.append({
+                    "ea": f_ea,
+                    "name": name,
+                    "type": "api_ref",
+                    "detail": f"{mnem} {text}"
+                })
+                break
+    return results
+
+
+# ----------------------------------------------------------------------
+# 特征 3：检测可疑长度字符串（8 / 16 / 32，可能是密钥）或者找和加解密相关的
+# ----------------------------------------------------------------------
+def find_suspicious_strings():
+    results = []
+    crypto_strings = [
+        "AES", "RSA", "MD5", "SHA", "key", "password", "secret", "cipher", "decrypt", "encrypt",
+        "EVP_CIPHER_CTX", "EVP_MD_CTX", "SSL_CTX", "BIO", "X509", "PKCS", "PEM", "DER",
+        "aes-128-cbc", "aes-256-cbc", "rc4", "des-cbc", "sha256", "md5",
+        "private key", "public key", "certificate", "random", "seed"
+    ]
+    for s in idautils.Strings():
+        text = str(s).strip()
+        length = len(text)
+        is_suspicious = length in (8, 16, 32) or any(keyword.lower() in text.lower() for keyword in crypto_strings)
+        if is_suspicious and text.lower() not in (t.lower() for t in TYPE_WHITELIST):
+            refs = list(idautils.DataRefsTo(s.ea))
+            for ref in refs:
+                f_ea = idc.get_func_attr(ref, idc.FUNCATTR_START)
+                if f_ea != idc.BADADDR:
+                    name = idaapi.get_func_name(f_ea) or f"sub_{f_ea:08X}"
+                    results.append({
+                        "ea": f_ea,
+                        "name": name,
+                        "type": "sus_str",
+                        "detail": f"len={length} '{text}'"
+                    })
+    return results
+
+
+# ----------------------------------------------------------------------
+# 处理 find_potential_key_functions 的模式 1、2、3 和 4：
+# ----------------------------------------------------------------------
+def find_crypto_patterns(min_functions=100):
+    results = []
+    # 初步筛选：基于函数名、导入和字符串
+    potential_functions = set()
+    all_functions = {func_ea: get_function(func_ea) for func_ea in idautils.Functions()}
+
+    # 函数名筛选
+    crypto_keywords = [
+        "AES", "RSA", "MD5", "SHA", "key", "password", "secret", "cipher", "decrypt", "encrypt",
+        "EVP", "SSL", "BIO", "X509", "PKCS", "PEM", "DER", "rc4", "des"
+    ]
+    for func_ea, func_info in all_functions.items():
+        if any(keyword.lower() in func_info["name"].lower() for keyword in crypto_keywords):
+            potential_functions.add(func_ea)
+
+    # 导入筛选
+    imports_page = list_imports(offset=0, count=0)
+    for imp in imports_page["data"]:
+        if any(keyword.lower() in imp["imported_name"].lower() for keyword in
+               crypto_keywords + ["qmemcpy", "memcpy", "RtlCopyMemory", "CopyMemory"]):
+            xrefs = get_xrefs_to(imp["address"])
+            for xref in xrefs:
+                if xref["function"]:
+                    potential_functions.add(parse_address(xref["function"]["address"]))
+
+    # 字符串筛选
+    strings_page = list_strings(offset=0, count=0)
+    for s in strings_page["data"]:
+        if any(keyword.lower() in s["string"].lower() for keyword in crypto_keywords):
+            xrefs = get_xrefs_to(s["address"])
+            for xref in xrefs:
+                if xref["function"]:
+                    potential_functions.add(parse_address(xref["function"]["address"]))
+
+    # 限制分析函数数量，防止卡死
+    potential_functions = list(potential_functions)[:min_functions]
+
+    # 正则表达式模式
+    pattern_1 = r"qmemcpy\(v\d+, \"(.+?)\", (\d+)\);\s*.*?do\s*.*?v\d+\[n0x\d+\] = \((\d+ \* \(v\d+\[n0x\d+\] - \d+\) % \d+ \+ \d+\) % \d+);"
+    crypto_func_pattern = r"\b(" + "|".join(re.escape(f) for f in [
+        "AES_encrypt", "AES_decrypt", "RC4", "MD5_Update", "SHA1_Update", "SHA256_Update",
+        "CryptEncrypt", "CryptDecrypt", "EVP_EncryptInit_ex", "EVP_DecryptInit_ex",
+        "RSA_public_encrypt", "RSA_private_decrypt", "DES_encrypt", "Blowfish_encrypt",
+        "EVP_BytesToKey", "EVP_CipherInit_ex", "SSL_CTX_use_certificate_file",
+        "RSA_set_key", "DSA_set_key", "EC_KEY_set_private_key"
+    ]) + r")\(.*?\);"
+    crypto_string_pattern = r"\b(" + "|".join(re.escape(s) for s in crypto_keywords) + r")\b"
+    pattern_2_general = f"({crypto_func_pattern}|{crypto_string_pattern})"
+    pattern_3_struct_access = r"(" + "|".join([
+        r"\bctx->key\b", r"\bctx->iv\b", r"\bctx->cipher\b",
+        r"\brsa->n\b", r"\brsa->e\b", r"\brsa->d\b",
+        r"\baes_key->rd_key\b", r"\baes_key->rounds\b"
+    ]) + r")"
+    pattern_4_assembly = r"(" + "|".join([
+        r"xor\s+r[a-z0-9]+,\s+r[a-z0-9]+",
+        r"rol\s+", r"ror\s+", r"shl\s+", r"shr\s+",
+        r"imul\s+",
+        r"mov\s+r[a-z0-9]+,\s+0x[0-9a-fA-F]{8,}",
+        r"call\s+ds:\[.*\]",
+        r"call\s+qword\s+ptr\s+\[.*\]"
+    ]) + r")"
+
+    for func_ea in potential_functions:
         try:
-            pseudocode = decompile_function(hex(func_ea))
-
-            # 模式1：硬编码字符串后跟带算术运算的循环，并检查特定长度
-            # 这是基于sub_405C0的简化模式。
-            # 它查找qmemcpy/memcpy一个字符串，然后是一个循环。
-            # 从qmemcpy中捕获长度
-            pattern_1 = r"qmemcpy\(v\d+, \"(.+?)\", (\d+)\);\s*.*?do\s*.*?v\d+\[n0x\d+\] = \((\d+ \* \(v\d+\[n0x\d+\] - \d+\) % \d+ \+ \d+\) % \d+);"
-
-            # 模式2：调用常见加密/哈希函数或存在加密相关字符串
-            # 这是一个更通用的模式。
-            common_crypto_functions = [
-                "AES_encrypt", "AES_decrypt", "RC4", "MD5_Update", "SHA1_Update", "SHA256_Update",
-                "CryptEncrypt", "CryptDecrypt", "EVP_EncryptInit_ex", "EVP_DecryptInit_ex",
-                "RSA_public_encrypt", "RSA_private_decrypt", "DES_encrypt", "Blowfish_encrypt",
-                # OpenSSL密钥设置函数
-                "EVP_BytesToKey", "EVP_CipherInit_ex", "SSL_CTX_use_certificate_file",
-                "RSA_set_key", "DSA_set_key", "EC_KEY_set_private_key"
-            ]
-            common_crypto_strings = [
-                "AES", "RSA", "MD5", "SHA", "key", "password", "secret", "cipher", "decrypt", "encrypt",
-                # 更多OpenSSL特定字符串
-                "EVP_CIPHER_CTX", "EVP_MD_CTX", "SSL_CTX", "BIO", "X509", "PKCS", "PEM", "DER",
-                "aes-128-cbc", "aes-256-cbc", "rc4", "des-cbc", "sha256", "md5",
-                "private key", "public key", "certificate", "random", "seed"
-            ]
-
-            # 构建常见加密函数调用的正则表达式
-            crypto_func_pattern = r"\b(" + "|".join(re.escape(f) for f in common_crypto_functions) + r")\(.*?\);"
-            # 构建常见加密字符串的正则表达式
-            crypto_string_pattern = r"\b(" + "|".join(re.escape(s) for s in common_crypto_strings) + r")\b"
-
-            # 将这些组合成一个更通用的模式2
-            pattern_2_general = f"({crypto_func_pattern}|{crypto_string_pattern})"
-
-            # 模式3：访问常见的OpenSSL结构体成员（例如，ctx->key, rsa->n）
-            # 这是一个启发式方法，可能会产生误报。
-            openssl_struct_members = [
-                r"\bctx->key\b", r"\bctx->iv\b", r"\bctx->cipher\b",
-                r"\brsa->n\b", r"\brsa->e\b", r"\brsa->d\b",
-                r"\baes_key->rd_key\b", r"\baes_key->rounds\b"
-            ]
-            pattern_3_struct_access = r"(" + "|".join(openssl_struct_members) + r")"
-
-            pseudocode = decompile_function(hex(func_ea))
-            disassembly = disassemble_function(hex(func_ea))
-            assembly_code = "\n".join([line["instruction"] for line in disassembly["lines"]])
-
-            # 模式4：汇编级别特征（例如，常见加密指令）
-            # 这高度依赖于架构。这里主要关注x86/x64的共同点。
-            # 示例：多次XOR操作、移位/旋转操作、特定常量加载
-            assembly_patterns = [
-                r"xor\s+r[a-z0-9]+,\s+r[a-z0-9]+",  # 寄存器XOR操作（在加密中常见）
-                r"rol\s+", r"ror\s+", r"shl\s+", r"shr\s+",  # 旋转/移位指令
-                r"imul\s+",  # 整数乘法（在某些算法中使用）
-                r"mov\s+r[a-z0-9]+,\s+0x[0-9a-fA-F]{8,}",  # 加载大常量（潜在的魔术数字）
-                r"call\s+ds:\[.*\]",  # 调用导入函数的常见模式
-                r"call\s+qword\s+ptr\s+\[.*\]"  # 调用导入函数的另一种常见模式
-            ]
-            pattern_4_assembly = r"(" + "|".join(assembly_patterns) + r")"
-
             is_potential_key_func = False
-
-            # 首先检查模式1，如果找到，则检查长度
-            match_1 = re.search(pattern_1, pseudocode, re.DOTALL)
-            if match_1:
-                try:
-                    key_length = int(match_1.group(2))  # group(2)捕获长度
+            # 反编译
+            pseudocode = None
+            try:
+                pseudocode = decompile_function(hex(func_ea))
+                if re.search(pattern_1, pseudocode, re.DOTALL):
+                    key_length = int(re.search(pattern_1, pseudocode, re.DOTALL).group(2))
                     if key_length in [8, 16, 32]:
                         is_potential_key_func = True
-                except ValueError:
-                    pass  # 如果无法解析长度，则继续检查其他模式
+                elif re.search(pattern_2_general, pseudocode, re.IGNORECASE | re.DOTALL):
+                    is_potential_key_func = True
+                elif re.search(pattern_3_struct_access, pseudocode, re.IGNORECASE | re.DOTALL):
+                    is_potential_key_func = True
+            except (DecompilerLicenseError, IDAError):
+                pass
 
-            # 如果模式1不匹配或长度不合适，则检查其他模式
-            if not is_potential_key_func and re.search(pattern_2_general, pseudocode, re.IGNORECASE | re.DOTALL):
-                is_potential_key_func = True
-
-            # 检查模式3（OpenSSL结构体成员访问）
-            if not is_potential_key_func and re.search(pattern_3_struct_access, pseudocode, re.IGNORECASE | re.DOTALL):
-                is_potential_key_func = True
-
-            # 检查模式4（汇编特征）
-            if not is_potential_key_func and re.search(pattern_4_assembly, assembly_code, re.IGNORECASE | re.DOTALL):
-                is_potential_key_func = True
+            # 反汇编
+            if not is_potential_key_func:
+                try:
+                    disassembly = disassemble_function(hex(func_ea))
+                    assembly_code = "\n".join([line["instruction"] for line in disassembly["lines"]])
+                    if re.search(pattern_4_assembly, assembly_code, re.IGNORECASE | re.DOTALL):
+                        is_potential_key_func = True
+                except IDAError:
+                    pass
 
             if is_potential_key_func:
                 func_info = get_function(func_ea)
-                potential_key_functions.append(func_info)
-                # 在IDA中为函数添加注释
+                results.append({
+                    "ea": func_ea,
+                    "name": func_info["name"],
+                    "type": "crypto_pattern",
+                    "detail": "Potential crypto/key function"
+                })
                 set_comment(hex(func_ea), "MCP插件识别：潜在密钥/加密函数。")
-
-        except DecompilerLicenseError:
-            # 跳过因许可证问题无法反编译的函数
-            continue
-        except IDAError as e:
-            # 记录其他IDA错误但继续处理
-            print(f"Error processing function {hex(func_ea)}: {e}")
-            continue
         except Exception as e:
-            # 捕获任何其他意外错误
-            print(f"Unexpected error processing function {hex(func_ea)}: {e}")
+            print(f"Error analyzing function {hex(func_ea)}: {e}")
             continue
 
-    return potential_key_functions
+    return results
 
 
-# ========== 动作 Handler ==========
+# ----------------------------------------------------------------------
+# 主扫描函数
+# ----------------------------------------------------------------------
+@jsonrpc
+@idaread
+def run_all_scans():
+    """
+    查找可能包含硬编码密钥或执行类似密钥操作的函数。
+    """
+    results = []
+    results.extend(find_const_byte_runs_fast(5))
+    results.extend(find_api_refs())
+    results.extend(find_suspicious_strings())
+    results.extend(find_crypto_patterns(min_functions=100))  # 限制为前 100 个候选函数
+
+    print(f"[+] Found {len(results)} suspicious functions")
+    for r in results:
+        print(f"{r['ea']:08X} {r['name']:<30} {r['type']:<12} {r['detail']}")
+    return results
+
+# ----------------------------------------------------------------------
+# 插件！！！！！MCP
+# ----------------------------------------------------------------------
+# ========== 动作 Handler（Server类定义在前面） ==========
 class StartServerHandler(idaapi.action_handler_t):
     def __init__(self, server_instance):
         idaapi.action_handler_t.__init__(self)
@@ -2009,7 +2470,6 @@ def register_mcp_menu():
     ))
     idaapi.attach_action_to_menu("Edit/MCP/Start_MCP", "mcp:start_server", idaapi.SETMENU_APP)
 
-
     idaapi.register_action(idaapi.action_desc_t(
         "mcp:stop_server",
         "Stop MCP Server",
@@ -2022,3 +2482,103 @@ def register_mcp_menu():
 
 # 脚本加载时直接注册菜单
 register_mcp_menu()
+
+
+
+# ----------------------------------------------------------------------
+# 插件！！！！！反编译输出C代码
+# ----------------------------------------------------------------------
+# ========== 异步反编译逻辑类 ==========
+class AsyncDecompileServer:
+    def __init__(self, output_file="decompiled_functions.c"):
+        self.output_file = os.path.abspath(output_file)
+
+    def start(self):
+        # 在主线程异步执行
+        ida_kernwin.execute_sync(self._worker, ida_kernwin.MFF_NOWAIT)
+
+    def _worker(self):
+        import os, time
+        os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
+
+        if not ida_hexrays.init_hexrays_plugin():
+            print("[ERROR] Hex-Rays decompiler not available.")
+            return
+
+        func_list = list(idautils.Functions())
+        total_functions = len(func_list)
+        function_count = 0
+        skipped_functions = 0
+        start_time = time.time()
+
+        with open(self.output_file, "w", encoding="utf-8") as f:
+            for func_ea in func_list:
+                function_count += 1
+                func_start_time = time.time()
+                func_name = idaapi.get_func_name(func_ea)
+                func_addr = hex(func_ea)
+
+                f.write(f"Function: {func_name} at {func_addr}\n==============\n")
+
+                try:
+                    cfunc = ida_hexrays.decompile(func_ea)
+                    if cfunc:
+                        pseudocode = "\n".join(
+                            ida_lines.tag_remove(sl.line) for sl in cfunc.get_pseudocode()
+                        )
+                        f.write(pseudocode + "\n")
+                    else:
+                        f.write("Error: Failed to decompile function.\n")
+                        skipped_functions += 1
+                except Exception as e:
+                    f.write(f"Error: {str(e)}\n")
+                    skipped_functions += 1
+
+                f.write("==============\n\n")
+                f.flush()
+                print(f"[INFO] {function_count}/{total_functions} - {func_name} processed "
+                      f"in {time.time() - func_start_time:.2f}s")
+
+                if function_count % 50 == 0:
+                    ida_hexrays.clear_cached_cfuncs()
+                    print(f"[INFO] Cleared decompiler cache at function {function_count}")
+
+        ida_hexrays.clear_cached_cfuncs()
+        print(f"[SUCCESS] Finished {function_count} functions, skipped {skipped_functions} "
+              f"in {time.time() - start_time:.2f}s. Output saved to {self.output_file}")
+
+
+# ========== Action Handler ==========
+class StartDecompileHandler(idaapi.action_handler_t):
+    def __init__(self, server_instance):
+        idaapi.action_handler_t.__init__(self)
+        self.server = server_instance
+
+    def activate(self, ctx):
+        self.server.start()
+        return 1
+
+    def update(self, ctx):
+        return idaapi.AST_ENABLE_ALWAYS
+
+
+# ========== 菜单注册 ==========
+server = AsyncDecompileServer()  # 全局变量, 原因：_worker 被立即调度执行、涉及文件和 Hex-Rays，临时对象可能在调度过程中被 GC 或线程调度机制打断
+
+
+def register_decompile_menu():
+    # server = AsyncDecompileServer()
+    idaapi.create_menu("Edit/MCP", "MCP")
+
+    idaapi.register_action(idaapi.action_desc_t(
+        "decompile:start_async",
+        "Start Async Decompile",
+        StartDecompileHandler(server),
+        "Ctrl-Alt-D",
+        "Decompile all functions asynchronously"
+    ))
+    idaapi.attach_action_to_menu("Edit/MCP/Start_Decompile", "decompile:start_async", idaapi.SETMENU_APP)
+
+
+# 脚本加载时直接注册菜单
+register_decompile_menu()
