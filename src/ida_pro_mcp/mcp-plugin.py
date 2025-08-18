@@ -2279,6 +2279,8 @@ def find_suspicious_strings():
         "aes-128-cbc", "aes-256-cbc", "rc4", "des-cbc", "sha256", "md5",
         "private key", "public key", "certificate", "random", "seed"
     ]
+
+    TYPE_WHITELIST = []
     for s in idautils.Strings():
         text = str(s).strip()
         length = len(text)
