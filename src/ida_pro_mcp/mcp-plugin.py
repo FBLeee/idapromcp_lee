@@ -2488,6 +2488,389 @@ register_mcp_menu()
 
 
 # ----------------------------------------------------------------------
+# 插件！！！！！Frida代码生成器
+# ----------------------------------------------------------------------
+# ========== Frida代码生成逻辑类 ==========
+class FridaCodeGenerator:
+    def __init__(self, output_file="frida_hooks.js", frida_version="17.x"):
+        self.output_file = os.path.abspath(output_file)
+        self.frida_version = frida_version
+        self.is_legacy_version = self._parse_version(frida_version) < (17, 0)
+    
+    def _parse_version(self, version_str):
+        """解析版本字符串，返回版本元组"""
+        try:
+            if version_str.endswith('.x'):
+                version_str = version_str[:-2]
+            parts = version_str.split('.')
+            major = int(parts[0]) if len(parts) > 0 else 16
+            minor = int(parts[1]) if len(parts) > 1 else 0
+            return (major, minor)
+        except (ValueError, IndexError):
+            # 默认为旧版本
+            return (16, 0)
+
+    def generate_hook_for_function(self, func_ea):
+        """为指定函数生成Frida Hook代码"""
+        try:
+            func_info = get_function(func_ea)
+            func_name = func_info["name"]
+            func_addr = func_info["address"]
+            
+            # 获取函数原型
+            func = idaapi.get_func(func_ea)
+            prototype = None
+            args_info = []
+            ret_type = "void"
+            
+            if func:
+                try:
+                    prototype = get_prototype(func)
+                    if prototype:
+                        # 解析函数原型获取参数信息
+                        args_info = self._parse_function_args(prototype)
+                        ret_type = self._parse_return_type(prototype)
+                except Exception as e:
+                    print(f"Warning: Failed to get prototype for {func_name}: {e}")
+            
+            # 生成Frida Hook代码
+            hook_code = self._generate_frida_hook_template(
+                func_name, func_addr, args_info, ret_type
+            )
+            
+            return hook_code
+            
+        except Exception as e:
+            print(f"Error generating Frida code for function at {hex(func_ea)}: {e}")
+            return None
+    
+    def _parse_function_args(self, prototype_str):
+        """解析函数原型获取参数信息"""
+        args = []
+        try:
+            # 简单的参数解析（可以根据需要改进）
+            if '(' in prototype_str and ')' in prototype_str:
+                args_part = prototype_str[prototype_str.find('(')+1:prototype_str.rfind(')')].strip()
+                if args_part and args_part != 'void':
+                    arg_list = [arg.strip() for arg in args_part.split(',')]
+                    for i, arg in enumerate(arg_list):
+                        parts = arg.split()
+                        if len(parts) >= 2:
+                            arg_type = ' '.join(parts[:-1])
+                            arg_name = parts[-1].replace('*', '').replace('&', '')
+                        else:
+                            arg_type = arg
+                            arg_name = f"arg{i}"
+                        args.append({"type": arg_type, "name": arg_name})
+        except Exception as e:
+            print(f"Warning: Failed to parse function arguments: {e}")
+        return args
+    
+    def _parse_return_type(self, prototype_str):
+        """解析函数原型获取返回值类型"""
+        try:
+            if prototype_str:
+                parts = prototype_str.split('(')
+                if len(parts) > 0:
+                    ret_part = parts[0].strip()
+                    # 移除函数名
+                    words = ret_part.split()
+                    if len(words) > 1:
+                        return ' '.join(words[:-1])
+        except Exception:
+            pass
+        return "void"
+    
+    def _generate_frida_hook_template(self, func_name, func_addr, args_info, ret_type):
+        """生成Frida Hook模板代码"""
+        # 根据版本选择不同的模板
+        if self.is_legacy_version:
+            return self._generate_legacy_template(func_name, func_addr, args_info, ret_type)
+        else:
+            return self._generate_modern_template(func_name, func_addr, args_info, ret_type)
+    
+    def _generate_legacy_template(self, func_name, func_addr, args_info, ret_type):
+        """生成Frida 17.x之前版本的Hook模板代码"""
+        # 构建参数赋值部分（使用参数名而非 argX）
+        param_assignments = []
+        param_logs = []
+        
+        for i, arg in enumerate(args_info):
+            param_name = arg['name'] if arg['name'] else f"arg{i}"
+            param_assignments.append(f"            this.{param_name} = args[{i}];")
+            
+            arg_type = arg['type'].lower()
+            if 'char*' in arg_type or 'string' in arg_type:
+                param_logs.append(f"                `        {param_name}:\\n${{this.{param_name}}}\\n`,")
+            elif any(t in arg_type for t in ['int', 'long', 'dword']):
+                param_logs.append(f"                `        {param_name}:\\n${{this.{param_name}.toInt32()}}\\n`,")
+            elif 'pointer' in arg_type or '*' in arg_type:
+                # 指针类型不生成hexdump，按照用户示例格式
+                param_logs.append(f"                `        {param_name}:\\n${{this.{param_name}.toInt32()}}\\n`,")
+            else:
+                param_logs.append(f"                `        {param_name}:\\n${{this.{param_name}}}\\n`,")
+        
+        # 构建返回值处理
+        if ret_type != "void":
+            ret_log = f"console.log(`[+] Leaving {func_name}, return: ${{retval}}`)"
+        else:
+            ret_log = f"console.log(`[+] Leaving {func_name}`)"
+        
+        # 生成参数输出部分
+        assignments_str = "\n".join(param_assignments) if param_assignments else ""
+        params_str = "\n".join(param_logs) if param_logs else ""
+        
+        # 获取函数地址的数值部分（去掉 0x 前缀）
+        addr_value = func_addr[2:] if func_addr.startswith('0x') else func_addr
+        
+        # 生成模板
+        template = f"""// Hook for function: {func_name} at {func_addr} (Frida <17.x)
+function hook_{func_name}() {{
+    var base_addr = Module.findBaseAddress("your_module.so"); // 请修改为实际模块名
+    var {func_name}_addr = base_addr.add(0x{addr_value});  //注意，该地址就是函数的地址，THUMB要加0x1
+    Interceptor.attach({func_name}_addr, {{
+        onEnter: function(args) {{
+{assignments_str}
+            console.log(`\\n------------------{func_name}-------------\\n`,
+                `[+] Entering {func_name}\\n`,
+{params_str}
+                `setValue called from:\\n` + Thread.backtrace(this.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join('\\n') + '\\r\\n'
+            );
+        }},
+        onLeave: function(retval) {{
+            {ret_log};
+        }}
+    }})
+}}
+
+"""
+        
+        return template
+    
+    def _generate_modern_template(self, func_name, func_addr, args_info, ret_type):
+        """生成Frida 17.x及以后版本的Hook模板代码"""
+        # 构建参数赋值部分（使用参数名而非 argX）
+        param_assignments = []
+        param_logs = []
+        
+        for i, arg in enumerate(args_info):
+            param_name = arg['name'] if arg['name'] else f"arg{i}"
+            param_assignments.append(f"            this.{param_name} = args[{i}];")
+            
+            arg_type = arg['type'].lower()
+            if 'char*' in arg_type or 'string' in arg_type:
+                param_logs.append(f"                `        {param_name}:\\n${{this.{param_name}}}\\n`,")
+            elif any(t in arg_type for t in ['int', 'long', 'dword']):
+                param_logs.append(f"                `        {param_name}:\\n${{this.{param_name}.toInt32()}}\\n`,")
+            elif 'pointer' in arg_type or '*' in arg_type:
+                # 指针类型不生成hexdump，按照用户示例格式
+                param_logs.append(f"                `        {param_name}:\\n${{this.{param_name}.toInt32()}}\\n`,")
+            else:
+                param_logs.append(f"                `        {param_name}:\\n${{this.{param_name}}}\\n`,")
+        
+        # 构建返回值处理
+        if ret_type != "void":
+            ret_log = f"console.log(`[+] Leaving {func_name}, return: ${{retval}}`)"
+        else:
+            ret_log = f"console.log(`[+] Leaving {func_name}`)"
+        
+        # 生成参数输出部分
+        assignments_str = "\n".join(param_assignments) if param_assignments else ""
+        params_str = "\n".join(param_logs) if param_logs else ""
+        
+        # 获取函数地址的数值部分（去掉 0x 前缀）
+        addr_value = func_addr[2:] if func_addr.startswith('0x') else func_addr
+        
+        # 生成模板
+        template = f"""// Hook for function: {func_name} at {func_addr} (Frida >=17.x)
+function hook_{func_name}() {{
+    const base_addr = Process.getModuleByName("your_module.so").base; // 请修改为实际模块名
+    const {func_name}_addr = base_addr.add(0x{addr_value});  //注意，该地址就是函数的地址，THUMB要加0x1
+    Interceptor.attach({func_name}_addr, {{
+        onEnter(args) {{
+{assignments_str}
+            console.log(`\\n------------------{func_name}-------------\\n`,
+                `[+] Entering {func_name}\\n`,
+{params_str}
+                `setValue called from:\\n` + Thread.backtrace(this.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join('\\n') + '\\r\\n'
+            );
+        }},
+        onLeave(retval) {{
+            {ret_log};
+        }}
+    }})
+}}
+
+"""
+        
+        return template
+    
+    def generate_for_current_function(self, frida_version=None):
+        """为当前选中的函数生成Frida代码"""
+        # 如果是通过插件菜单调用，使用按钮弹窗询问版本
+        if frida_version is None:
+            try:
+                import ida_kernwin
+                # 使用按钮弹窗询问版本
+                choice = ida_kernwin.ask_buttons(
+                    ">=17", "<17", "Cancel",
+                    ida_kernwin.ASKBTN_BTN1,
+                    "Choose Frida version:"
+                )
+                
+                if choice == ida_kernwin.ASKBTN_CANCEL:
+                    print("[INFO] Operation cancelled")
+                    return False
+                elif choice == ida_kernwin.ASKBTN_BTN1:
+                    frida_version = "17.x"
+                else:  # ASKBTN_BTN2
+                    frida_version = "16.x"
+            except:
+                frida_version = "17.x"  # 如果弹窗失败，使用默认版本
+            
+        self.frida_version = frida_version
+        self.is_legacy_version = self._parse_version(frida_version) < (17, 0)
+            
+        current_ea = idaapi.get_screen_ea()
+        func = idaapi.get_func(current_ea)
+        
+        if not func:
+            print("[ERROR] No function found at current address")
+            return False
+        
+        # 检查文件是否存在，如果存在则问是否覆盖
+        import os
+        if os.path.exists(self.output_file):
+            try:
+                import ida_kernwin
+                overwrite = ida_kernwin.ask_buttons(
+                    "Overwrite", "Cancel", "",
+                    ida_kernwin.ASKBTN_BTN1,
+                    f"File '{self.output_file}' already exists.\n\nDo you want to overwrite it?"
+                )
+                
+                if overwrite != ida_kernwin.ASKBTN_BTN1:
+                    print("[INFO] Operation cancelled - file not overwritten")
+                    return False
+            except:
+                # 如果弹窗失败，默认不覆盖
+                print("[WARNING] File exists, operation cancelled")
+                return False
+        
+        hook_code = self.generate_hook_for_function(func.start_ea)
+        if hook_code:
+            with open(self.output_file, "w", encoding="utf-8") as f:  # 使用 "w" 模式覆盖写入
+                f.write(hook_code)
+                # 添加主函数和调用
+                f.write(f"\nfunction main() {{\n")
+                f.write(f"    hook_{idaapi.get_func_name(func.start_ea)}();\n")
+                f.write(f"}}\n\n")
+                f.write(f"setImmediate(main);\n")
+            
+            version_info = "<17.x" if self.is_legacy_version else ">=17.x"
+            print(f"[SUCCESS] Frida hook code (v{version_info}) generated for {idaapi.get_func_name(func.start_ea)} and saved to {self.output_file}")
+            return True
+        return False
+    
+
+
+@jsonrpc
+@idaread
+def generate_frida_hooks_batch(
+    function_addresses: Annotated[list[str], "List of function addresses to generate Frida hooks for"],
+    frida_version: Annotated[str, "Frida version (e.g., '16.5', '17.0', '17.x'). Defaults to '17.x'"] = "17.x"
+) -> list[dict]:
+    """Generate Frida hook code for multiple functions"""
+    results = []
+    generator = FridaCodeGenerator(frida_version=frida_version)
+    
+    for addr_str in function_addresses:
+        try:
+            func_ea = parse_address(addr_str)
+            hook_code = generator.generate_hook_for_function(func_ea)
+            
+            if hook_code:
+                func_info = get_function(func_ea)
+                results.append({
+                    "address": addr_str,
+                    "name": func_info["name"],
+                    "hook_code": hook_code,
+                    "frida_version": frida_version,
+                    "success": True
+                })
+            else:
+                results.append({
+                    "address": addr_str,
+                    "name": "unknown",
+                    "hook_code": None,
+                    "frida_version": frida_version,
+                    "success": False,
+                    "error": "Failed to generate hook code"
+                })
+        except Exception as e:
+            results.append({
+                "address": addr_str, 
+                "name": "unknown",
+                "hook_code": None,
+                "frida_version": frida_version,
+                "success": False,
+                "error": str(e)
+            })
+    
+    return results
+
+
+@jsonrpc
+@idaread
+def get_frida_version_info() -> dict:
+    """Get information about supported Frida versions and their differences"""
+    return {
+        "supported_versions": ["16.x", "17.x"],
+        "default_version": "17.x",
+        "version_differences": {
+            "16.x": {
+                "description": "Legacy Frida versions (before 17.0)",
+                "features": [
+                    "Traditional var declarations",
+                    "function() syntax",
+                    "String concatenation with +",
+                    "Memory.readUtf8String() error handling",
+                    "Classical JavaScript patterns"
+                ],
+                "limitations": [
+                    "No modern ES6+ features",
+                    "Less efficient memory operations",
+                    "Basic error handling"
+                ]
+            },
+            "17.x": {
+                "description": "Modern Frida versions (17.0 and later)",
+                "features": [
+                    "ES6+ syntax (const/let, template literals)",
+                    "Arrow functions support",
+                    "Enhanced Memory API with ArrayBuffer.wrap()",
+                    "Improved error handling",
+                    "Modern JavaScript features",
+                    "Better performance optimizations"
+                ],
+                "improvements": [
+                    "More efficient memory access",
+                    "Better debugging capabilities",
+                    "Cleaner code generation",
+                    "Enhanced type safety"
+                ]
+            }
+        },
+        "migration_notes": [
+            "Frida 17.x introduces modern JavaScript features",
+            "Legacy code should still work but modern syntax is recommended",
+            "ArrayBuffer.wrap() provides more efficient memory access",
+            "Template literals improve string formatting readability"
+        ]
+    }
+
+
+# ----------------------------------------------------------------------
 # 插件！！！！！反编译输出C代码
 # ----------------------------------------------------------------------
 # ========== 异步反编译逻辑类 ==========
@@ -2564,8 +2947,24 @@ class StartDecompileHandler(idaapi.action_handler_t):
         return idaapi.AST_ENABLE_ALWAYS
 
 
+# ========== Frida Generator Action Handlers ==========
+class GenerateFridaCurrentHandler(idaapi.action_handler_t):
+    def __init__(self, generator_instance):
+        idaapi.action_handler_t.__init__(self)
+        self.generator = generator_instance
+
+    def activate(self, ctx):
+        self.generator.generate_for_current_function()
+        return 1
+
+    def update(self, ctx):
+        return idaapi.AST_ENABLE_ALWAYS
+
+
+
 # ========== 菜单注册 ==========
 server = AsyncDecompileServer()  # 全局变量, 原因：_worker 被立即调度执行、涉及文件和 Hex-Rays，临时对象可能在调度过程中被 GC 或线程调度机制打断
+frida_generator = FridaCodeGenerator()  # 全局变量，同样原因
 
 
 def register_decompile_menu():
@@ -2582,5 +2981,21 @@ def register_decompile_menu():
     idaapi.attach_action_to_menu("Edit/MCP/Start_Decompile", "decompile:start_async", idaapi.SETMENU_APP)
 
 
+def register_frida_menu():
+    """注册Frida代码生成菜单"""
+    idaapi.create_menu("Edit/MCP", "MCP")
+    
+    # 为当前函数生成Frida Hook
+    idaapi.register_action(idaapi.action_desc_t(
+        "frida:generate_current",
+        "Generate Frida Hook (Current Function)",
+        GenerateFridaCurrentHandler(frida_generator),
+        "Ctrl-Alt-F",
+        "Generate Frida hook code for current function"
+    ))
+    idaapi.attach_action_to_menu("Edit/MCP/Generate_Frida_Current", "frida:generate_current", idaapi.SETMENU_APP)
+
+
 # 脚本加载时直接注册菜单
 register_decompile_menu()
+register_frida_menu()
